@@ -88,7 +88,6 @@ class SnmpJobForm(forms.ModelForm):
         widget=forms.TextInput(attrs={
             'class': 'form-control',
             'readonly': 'readonly',
-            'style': 'background-color: #2d3748; color: #e2e8f0; border-color: #4a5568;'
         }),
         label="Descripción del Horario",
         required=False,

@@ -42,6 +42,104 @@
             cursor: not-allowed !important;
             pointer-events: none;
         }
+        
+        /* Estilos específicos para campos readonly */
+        input[readonly] {
+            background-color: var(--disabled-bg) !important;
+            color: var(--secondary-text) !important;
+            border-color: var(--border-color) !important;
+        }
+        
+        /* Estilos para tema claro específico */
+        html[data-theme="light"] input[readonly] {
+            background-color: #f8f9fa !important;
+            color: #6c757d !important;
+            border-color: #ced4da !important;
+        }
+        
+        /* Estilos para tema oscuro específico */
+        html[data-theme="dark"] input[readonly],
+        .dark-theme input[readonly] {
+            background-color: #333333 !important;
+            color: #b0b0b0 !important;
+            border-color: #404040 !important;
+        }
+        
+        /* ===== ESTILOS PARA TODOS LOS CAMPOS DEL FORMULARIO ===== */
+        
+        /* TEMA CLARO - Campos del formulario */
+        html[data-theme="light"] input[type="text"],
+        html[data-theme="light"] input[type="number"],
+        html[data-theme="light"] textarea,
+        html[data-theme="light"] select {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+            border-color: #cccccc !important;
+        }
+        
+        html[data-theme="light"] input[type="text"]:focus,
+        html[data-theme="light"] input[type="number"]:focus,
+        html[data-theme="light"] textarea:focus,
+        html[data-theme="light"] select:focus {
+            border-color: #4facfe !important;
+            background-color: #ffffff !important;
+        }
+        
+        /* TEMA OSCURO - Campos del formulario */
+        html[data-theme="dark"] input[type="text"],
+        html[data-theme="dark"] input[type="number"],
+        html[data-theme="dark"] textarea,
+        html[data-theme="dark"] select {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
+        
+        html[data-theme="dark"] input[type="text"]:focus,
+        html[data-theme="dark"] input[type="number"]:focus,
+        html[data-theme="dark"] textarea:focus,
+        html[data-theme="dark"] select:focus {
+            border-color: #4facfe !important;
+            background-color: #2d2d2d !important;
+        }
+        
+        /* Clase dark-theme */
+        .dark-theme input[type="text"],
+        .dark-theme input[type="number"],
+        .dark-theme textarea,
+        .dark-theme select {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
+        
+        .dark-theme input[type="text"]:focus,
+        .dark-theme input[type="number"]:focus,
+        .dark-theme textarea:focus,
+        .dark-theme select:focus {
+            border-color: #4facfe !important;
+            background-color: #2d2d2d !important;
+        }
+        
+        /* Media query para tema oscuro */
+        @media (prefers-color-scheme: dark) {
+            input[type="text"],
+            input[type="number"],
+            textarea,
+            select {
+                background-color: #2d2d2d !important;
+                color: #e0e0e0 !important;
+                border-color: #404040 !important;
+            }
+            
+            input[type="text"]:focus,
+            input[type="number"]:focus,
+            textarea:focus,
+            select:focus {
+                border-color: #4facfe !important;
+                background-color: #2d2d2d !important;
+            }
+        }
         .selector {
             width: 100%;
             max-width: 900px;
@@ -89,6 +187,83 @@
         .selector select option {
             padding: 3px 10px;
         }
+        
+        /* ===== ESTILOS ESPECÍFICOS PARA SELECTOR DE OLTs ===== */
+        
+        /* TEMA CLARO - Selector de OLTs */
+        html[data-theme="light"] .selector-available select,
+        html[data-theme="light"] .selector-chosen select {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+            border-color: #cccccc !important;
+        }
+        
+        html[data-theme="light"] .selector-available option,
+        html[data-theme="light"] .selector-chosen option {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+        }
+        
+        html[data-theme="light"] .selector-filter {
+            background-color: #ffffff !important;
+            border-color: #cccccc !important;
+        }
+        
+        html[data-theme="light"] .selector-filter input {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+            border-color: #cccccc !important;
+        }
+        
+        /* TEMA OSCURO - Selector de OLTs */
+        html[data-theme="dark"] .selector-available select,
+        html[data-theme="dark"] .selector-chosen select {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
+        
+        html[data-theme="dark"] .selector-available option,
+        html[data-theme="dark"] .selector-chosen option {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+        }
+        
+        html[data-theme="dark"] .selector-filter {
+            background-color: #2d2d2d !important;
+            border-color: #404040 !important;
+        }
+        
+        html[data-theme="dark"] .selector-filter input {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
+        
+        /* Clase dark-theme */
+        .dark-theme .selector-available select,
+        .dark-theme .selector-chosen select {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
+        
+        .dark-theme .selector-available option,
+        .dark-theme .selector-chosen option {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+        }
+        
+        .dark-theme .selector-filter {
+            background-color: #2d2d2d !important;
+            border-color: #404040 !important;
+        }
+        
+        .dark-theme .selector-filter input {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #404040 !important;
+        }
         .loading {
             opacity: 0.5;
             pointer-events: none;
@@ -112,7 +287,7 @@
             left: 0 !important;
             right: 0 !important;
             z-index: 1000 !important;
-            background: #2c2c2c !important; /* Fondo gris oscuro */
+            background: var(--bg-color) !important; /* Usar variable CSS */
             border: 2px solid #4facfe !important; /* Borde azul */
             border-top: none !important;
             max-height: 250px !important; /* Altura aumentada */
@@ -125,7 +300,7 @@
             padding: 10px 15px !important;
             cursor: pointer !important;
             border-bottom: 1px solid #4facfe !important; /* Borde azul */
-            color: white !important; /* Texto blanco */
+            color: var(--text-color) !important; /* Usar variable CSS */
             font-size: 13px !important;
             line-height: 1.4 !important;
             transition: background-color 0.2s ease !important;
@@ -142,13 +317,13 @@
         
         .oid-search-item .oid-name {
             font-weight: bold !important;
-            color: white !important;
+            color: var(--text-color) !important; /* Usar variable CSS */
             margin-bottom: 2px !important;
         }
         
         .oid-search-item .oid-value {
             font-family: monospace !important;
-            color: #ccc !important; /* Gris claro */
+            color: var(--secondary-text) !important; /* Usar variable CSS */
             font-size: 12px !important;
             margin-bottom: 2px !important;
         }
@@ -367,7 +542,7 @@
 {% block content %}
 <div id="content-main">
     {% if is_edit %}
-        <h1>Editar Tarea SNMP: {{ original.nombre }}</h1>
+        <h1>{{ original.nombre }}</h1>
     {% else %}
         <h1>{{ title }}</h1>
     {% endif %}

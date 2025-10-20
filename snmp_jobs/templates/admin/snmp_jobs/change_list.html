@@ -12,6 +12,42 @@
         #result_list tbody tr:hover {
             background-color: #f5f5f5;
         }
+        
+        /* ===== SOLO TEMA OSCURO ===== */
+        @media (prefers-color-scheme: dark) {
+            #result_list tbody tr:hover {
+                background-color: #2d2d2d !important;
+            }
+            #result_list tbody tr.selected {
+                background-color: #00363a !important;
+            }
+        }
+        
+        html[data-theme="dark"] #result_list tbody tr:hover {
+            background-color: #2d2d2d !important;
+        }
+        
+        html[data-theme="dark"] #result_list tbody tr.selected {
+            background-color: #00363a !important;
+        }
+        
+        .dark-theme #result_list tbody tr:hover {
+            background-color: #2d2d2d !important;
+        }
+        
+        .dark-theme #result_list tbody tr.selected {
+            background-color: #00363a !important;
+        }
+        
+        /* ===== SOLO TEMA CLARO ===== */
+        html[data-theme="light"] #result_list tbody tr:hover {
+            background-color: #f5f5f5 !important;
+        }
+        
+        html[data-theme="light"] #result_list tbody tr.selected {
+            background-color: #ffc !important;
+        }
+        
         .field-enabled {
             text-align: center;
         }
