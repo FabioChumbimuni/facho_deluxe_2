@@ -1,0 +1,295 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_modify %}
+
+{% block title %}Configuración Avanzada - SNMP{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* CSS Variables for dark theme */
+    :root {
+        --primary-color: #007cba;
+        --primary-hover: #005a87;
+        --background-light: #f8f9fa;
+        --background-dark: #1a1a1a;
+        --text-dark: #333;
+        --text-light: #fff;
+        --border-color: #ddd;
+        --border-dark: #444;
+        --card-bg: #fff;
+        --card-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+    }
+
+    /* Dark theme styles */
+    [data-theme="dark"] {
+        --background-light: #2d2d2d;
+        --background-dark: #1a1a1a;
+        --text-dark: #e0e0e0;
+        --text-light: #fff;
+        --border-color: #444;
+        --card-bg: #2d2d2d;
+        --card-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        --success-color: #4caf50;
+        --danger-color: #f44336;
+        --warning-color: #ff9800;
+        --info-color: #2196f3;
+    }
+
+    .snmp-dashboard {
+        padding: 20px;
+        background: var(--background-light);
+        color: var(--text-dark);
+        min-height: 100vh;
+    }
+
+    .theme-toggle {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: var(--primary-color);
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        z-index: 1000;
+        transition: background-color 0.3s;
+    }
+
+    .theme-toggle:hover {
+        background: var(--primary-hover);
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: var(--card-shadow);
+        transition: transform 0.2s;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-2px);
+    }
+
+    .stat-number {
+        font-size: 2em;
+        font-weight: bold;
+        color: var(--primary-color);
+        margin-bottom: 10px;
+    }
+
+    .stat-label {
+        color: var(--text-dark);
+        font-size: 1em;
+    }
+
+    .config-list {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+    }
+
+    .config-item {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+        gap: 15px;
+        align-items: center;
+        padding: 15px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .config-item:last-child {
+        border-bottom: none;
+    }
+
+    .config-name {
+        font-weight: bold;
+        color: var(--primary-color);
+    }
+
+    .config-version {
+        background: var(--background-light);
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        color: var(--text-dark);
+        text-align: center;
+    }
+
+    .version-1 { background: #fff3cd; color: #856404; }
+    .version-2c { background: #d4edda; color: #155724; }
+    .version-3 { background: #cce5ff; color: #004085; }
+
+    [data-theme="dark"] .version-1 { background: #4a3c00; color: #ffd700; }
+    [data-theme="dark"] .version-2c { background: #1b4d1b; color: #90ee90; }
+    [data-theme="dark"] .version-3 { background: #003366; color: #87ceeb; }
+
+    .config-timeout {
+        font-family: monospace;
+        background: var(--background-light);
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        color: var(--text-dark);
+    }
+
+    .config-retries {
+        text-align: center;
+        font-weight: bold;
+        color: var(--text-dark);
+    }
+
+    .config-community {
+        font-family: monospace;
+        background: var(--background-light);
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        color: var(--text-dark);
+    }
+
+    .status-active {
+        color: var(--success-color);
+        font-weight: bold;
+    }
+
+    .status-inactive {
+        color: var(--danger-color);
+        font-weight: bold;
+    }
+
+    /* Header styles for dark theme */
+    [data-theme="dark"] .config-item[style*="background: #f8f9fa"] {
+        background: var(--background-light) !important;
+        color: var(--text-dark) !important;
+    }
+
+    /* Links */
+    a {
+        color: var(--primary-color);
+        text-decoration: none;
+    }
+
+    a:hover {
+        color: var(--primary-hover);
+        text-decoration: underline;
+    }
+
+    /* Buttons */
+    .button {
+        background: var(--primary-color);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 4px;
+        text-decoration: none;
+        display: inline-block;
+        transition: background-color 0.3s;
+    }
+
+    .button:hover {
+        background: var(--primary-hover);
+        color: white;
+        text-decoration: none;
+    }
+</style>
+<script>
+    // Toggle dark theme logic
+    function toggleTheme() {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('config-theme', newTheme);
+        const button = document.querySelector('.theme-toggle');
+        button.textContent = newTheme === 'dark' ? '🌙 Tema Oscuro' : '☀️ Tema Claro';
+    }
+
+    // Load saved theme on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedTheme = localStorage.getItem('config-theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        const button = document.querySelector('.theme-toggle');
+        if (button) {
+            button.textContent = savedTheme === 'dark' ? '🌙 Tema Oscuro' : '☀️ Tema Claro';
+        }
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="snmp-dashboard">
+    <button class="theme-toggle" onclick="toggleTheme()">☀️ Tema Claro</button>
+    <h1>🌐 Configuración SNMP</h1>
+    
+    <p>
+        <a href="{% url 'configuracion_avanzada:dashboard' %}">← Volver al Dashboard</a>
+        | 
+        <a href="{% url 'admin:configuracion_avanzada_configuracionsnmp_add' %}">➕ Agregar Nueva Configuración SNMP</a>
+    </p>
+
+    <!-- Estadísticas SNMP -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-number">{{ total_configs }}</div>
+            <div class="stat-label">Total Configuraciones</div>
+        </div>
+        {% for version, count in versiones.items %}
+        <div class="stat-card">
+            <div class="stat-number">{{ count }}</div>
+            <div class="stat-label">SNMPv{{ version }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="config-list">
+        {% if configs_snmp %}
+            <div class="config-item" style="font-weight: bold; background: #f8f9fa; border-bottom: 2px solid #007cba;">
+                <div>Nombre</div>
+                <div>Versión</div>
+                <div>Comunidad</div>
+                <div>Timeout</div>
+                <div>Reintentos</div>
+                <div>Estado</div>
+            </div>
+            
+            {% for config in configs_snmp %}
+            <div class="config-item">
+                <div class="config-name">{{ config.nombre }}</div>
+                <div class="config-version version-{{ config.version }}">
+                    v{{ config.version }}
+                </div>
+                <div class="config-community">{{ config.comunidad }}</div>
+                <div class="config-timeout">{{ config.timeout }}s</div>
+                <div class="config-retries">{{ config.reintentos }}</div>
+                <div class="{% if config.activo %}status-active{% else %}status-inactive{% endif %}">
+                    {% if config.activo %}✅ Activo{% else %}❌ Inactivo{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>No hay configuraciones SNMP.</p>
+            <p>
+                <a href="{% url 'admin:configuracion_avanzada_configuracionsnmp_add' %}" class="button default">
+                    ➕ Agregar Primera Configuración SNMP
+                </a>
+            </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        /* Tema Claro (default) */
+        body {
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        .summary-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        .summary-box strong {
+            color: #856404;
+            transition: color 0.3s;
+        }
+        .task-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            transition: background-color 0.3s;
+        }
+        .task-table th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            border-bottom: 2px solid #dee2e6;
+            font-weight: bold;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
+        .task-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #dee2e6;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
+        .task-table tr:hover {
+            background: #f8f9fa;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            color: white;
+        }
+        .badge.discovery {
+            background: #28a745;
+        }
+        .badge.get {
+            background: #007bff;
+        }
+        .badge.otros {
+            background: #6c757d;
+        }
+        .oid-info {
+            font-family: monospace;
+            color: #495057;
+            font-size: 12px;
+            transition: color 0.3s;
+        }
+        .olt-count {
+            font-weight: bold;
+            color: #007bff;
+            transition: color 0.3s;
+        }
+        
+        /* TEMA OSCURO - Sincronizado con Django Admin */
+        html[data-theme="dark"] body,
+        html[data-theme="dark"] #content {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] h1 {
+            color: #f0f0f0;
+        }
+        
+        html[data-theme="dark"] .summary-box {
+            background: #3d3000;
+            border-color: #ffc107;
+        }
+        
+        html[data-theme="dark"] .summary-box strong {
+            color: #ffd54f;
+        }
+        
+        html[data-theme="dark"] .task-table {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] .task-table th {
+            background: #3d3d3d;
+            color: #f0f0f0;
+            border-bottom-color: #555;
+        }
+        
+        html[data-theme="dark"] .task-table td {
+            border-bottom-color: #555;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] .task-table tr:hover {
+            background: #3d3d3d;
+        }
+        
+        html[data-theme="dark"] .oid-info {
+            color: #a0d468;
+        }
+        
+        html[data-theme="dark"] .olt-count {
+            color: #5dade2;
+        }
+        
+        html[data-theme="dark"] .breadcrumbs {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] .breadcrumbs a {
+            color: #5dade2;
+        }
+        
+        html[data-theme="dark"] .button.default {
+            background: #28a745 !important;
+            color: white !important;
+        }
+        
+        html[data-theme="dark"] .button.cancel {
+            background: #6c757d !important;
+            color: white !important;
+        }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:snmp_jobs_snmpjob_changelist' %}">{% trans 'Tareas SNMP' %}</a>
+    &rsaquo; {% trans 'Confirmar Ejecución Manual' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>🚀 Confirmar Ejecución Manual</h1>
+
+<div class="summary-box">
+    <strong>📊 Resumen:</strong> Has seleccionado <strong>{{ total_tareas }}</strong> tarea(s) habilitada(s) para ejecutar manualmente.
+</div>
+
+<table class="task-table">
+    <thead>
+        <tr>
+            <th>Tarea</th>
+            <th>Tipo</th>
+            <th>OID</th>
+            <th>OLTs Afectadas</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for tarea in queryset %}
+        <tr>
+            <td><strong>{{ tarea.nombre }}</strong></td>
+            <td>
+                {% if tarea.job_type == 'descubrimiento' %}
+                    <span class="badge discovery">DISCOVERY</span>
+                {% elif tarea.job_type == 'get' %}
+                    <span class="badge get">GET</span>
+                {% else %}
+                    <span class="badge otros">{{ tarea.job_type|upper }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <strong>{{ tarea.oid.nombre }}</strong><br>
+                <span class="oid-info">{{ tarea.oid.oid }}</span>
+            </td>
+            <td>
+                <span class="olt-count">{{ tarea.job_hosts.filter.count }}</span> OLT(s)
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<form method="post">
+    {% csrf_token %}
+    {% for obj in queryset %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
+    {% endfor %}
+    <input type="hidden" name="action" value="ejecutar_tareas_seleccionadas">
+    <input type="hidden" name="post" value="yes">
+    
+    <div style="margin-top: 30px;">
+        <input type="submit" value="✅ Confirmar y Ejecutar" class="button default" style="background:#28a745;color:white;padding:10px 20px;font-size:14px;">
+        <a href="{% url 'admin:snmp_jobs_snmpjob_changelist' %}" class="button cancel" style="margin-left:10px;">❌ Cancelar</a>
+    </div>
+</form>
+
+{% endblock %}
+

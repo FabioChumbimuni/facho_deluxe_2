@@ -1,0 +1,121 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_modify %}
+
+{% block title %}Configuración Avanzada - {{ categoria_nombre }}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    .config-categoria {
+        padding: 20px;
+    }
+    .config-list {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+    }
+    .config-item {
+        display: grid;
+        grid-template-columns: 1fr 2fr 1fr 1fr;
+        gap: 15px;
+        align-items: center;
+        padding: 15px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .config-item:last-child {
+        border-bottom: none;
+    }
+    .config-name {
+        font-weight: bold;
+        color: #007cba;
+    }
+    .config-desc {
+        color: #666;
+        font-size: 0.9em;
+    }
+    .config-value {
+        font-family: monospace;
+        background: #f8f9fa;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        word-break: break-all;
+    }
+    .config-type {
+        background: #e9ecef;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        color: #495057;
+        text-align: center;
+    }
+    .type-string { background: #d4edda; color: #155724; }
+    .type-integer { background: #cce5ff; color: #004085; }
+    .type-float { background: #b3d9ff; color: #004085; }
+    .type-boolean { background: #fff3cd; color: #856404; }
+    .type-json { background: #e2e3f0; color: #383d41; }
+    .type-url { background: #f8d7da; color: #721c24; }
+    .type-email { background: #f5c6cb; color: #721c24; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="config-categoria">
+    <h1>
+        {% if categoria == 'snmp' %}🌐{% elif categoria == 'celery' %}⚡{% elif categoria == 'redis' %}🔴{% elif categoria == 'database' %}🗄️{% elif categoria == 'logging' %}📝{% elif categoria == 'security' %}🔒{% elif categoria == 'performance' %}⚡{% else %}⚙️{% endif %}
+        Configuraciones: {{ categoria_nombre }}
+    </h1>
+    
+    <p>
+        <a href="{% url 'configuracion_avanzada:dashboard' %}">← Volver al Dashboard</a>
+        | 
+        <a href="{% url 'admin:configuracion_avanzada_configuracionsistema_add' %}">➕ Agregar Nueva Configuración</a>
+    </p>
+
+    <div class="config-list">
+        {% if configs %}
+            <div class="config-item" style="font-weight: bold; background: #f8f9fa; border-bottom: 2px solid #007cba;">
+                <div>Nombre</div>
+                <div>Descripción</div>
+                <div>Valor</div>
+                <div>Tipo</div>
+            </div>
+            
+            {% for config in configs %}
+            <div class="config-item">
+                <div>
+                    <div class="config-name">{{ config.nombre }}</div>
+                    {% if config.solo_lectura %}
+                        <small style="color: #dc3545;">🔒 Solo lectura</small>
+                    {% endif %}
+                </div>
+                <div class="config-desc">
+                    {{ config.descripcion|default:"Sin descripción" }}
+                </div>
+                <div class="config-value">
+                    {% if config.tipo == 'boolean' %}
+                        {% if config.get_valor_typed %}✅ Sí{% else %}❌ No{% endif %}
+                    {% elif config.tipo == 'json' %}
+                        {{ config.valor|truncatechars:50 }}
+                    {% else %}
+                        {{ config.valor|truncatechars:50 }}
+                    {% endif %}
+                </div>
+                <div class="config-type type-{{ config.tipo }}">
+                    {{ config.get_tipo_display }}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>No hay configuraciones en esta categoría.</p>
+            <p>
+                <a href="{% url 'admin:configuracion_avanzada_configuracionsistema_add' %}" class="button default">
+                    ➕ Agregar Primera Configuración
+                </a>
+            </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

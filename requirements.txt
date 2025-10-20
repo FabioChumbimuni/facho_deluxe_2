@@ -1,0 +1,52 @@
+# Core Django y Base de Datos
+Django==4.2.16
+psycopg2-binary==2.9.10
+gunicorn==23.0.0
+
+# Celery y Workers
+celery==5.5.0
+redis==5.0.1
+django-celery-beat==2.8.1
+django-celery-results==2.6.0
+
+# SNMP
+easysnmp==0.2.6
+
+# Utilidades
+PyYAML==6.0.1
+lxml==5.3.0
+python-decouple==3.8
+django-environ==0.11.2
+whitenoise==6.9.0
+requests==2.32.3
+
+# Django Extensions
+django-extensions==3.2.3
+django-cors-headers==4.3.1
+django-filter==24.3
+djangorestframework==3.15.1
+drf-spectacular==0.27.2
+
+# Forms y UI
+django-crispy-forms==2.3
+crispy-bootstrap5==2024.10
+django-bootstrap5==24.3
+django-widget-tweaks==1.5.0
+
+# Admin Interface
+django-admin-interface==0.28.8
+django-colorfield==0.11.0
+django-json-widget==2.0.1
+
+# Import/Export
+django-import-export==4.3.3
+
+# History y Audit
+django-simple-history==3.7.0
+django-auditlog==3.0.0
+
+# Admin Tools
+django-admin-sortable2==2.2.3
+django-admin-honeypot==1.1.0
+django-admin-tools==0.9.3
+django-admin-extra-urls==4.1.1

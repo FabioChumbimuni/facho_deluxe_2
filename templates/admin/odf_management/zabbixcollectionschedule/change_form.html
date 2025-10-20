@@ -1,0 +1,120 @@
+{% extends "admin/change_form.html" %}
+{% load static %}
+
+{% block admin_change_form_document_ready %}
+    {{ block.super }}
+    <script>
+    (function($) {
+        $(document).ready(function() {
+            // Mejorar la visualización del inline de OLTs
+            var oltInline = $('#zabbixcollectionolt_set-group');
+            
+            if (oltInline.length) {
+                // Agregar estilos para mejor visualización
+                oltInline.find('.tabular').addClass('olt-selection-table');
+                
+                // Agregar título personalizado
+                oltInline.find('h2').html('🖥️ OLTs Asignadas a esta Programación');
+                
+                // Mejorar la tabla
+                oltInline.find('table').css({
+                    'border-collapse': 'separate',
+                    'border-spacing': '0 5px'
+                });
+                
+                // Estilizar filas
+                oltInline.find('tbody tr').css({
+                    'background': '#f8f9fa',
+                    'border': '1px solid #dee2e6',
+                    'border-radius': '5px'
+                });
+                
+                // Agregar información de ayuda y acciones rápidas
+                oltInline.append(`
+                    <div style="background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 5px; padding: 15px; margin-top: 15px;">
+                        <h4 style="margin: 0 0 10px 0; color: #2c5aa0;">💡 Gestión de OLTs en esta Programación</h4>
+                        
+                        <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                            <div style="flex: 1;">
+                                <h5 style="margin: 0 0 5px 0; color: #28a745;">✅ Acciones Disponibles:</h5>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 13px;">
+                                    <li><strong>Agregar OLT:</strong> Botón "Agregar otro OLT" abajo</li>
+                                    <li><strong>Habilitar/Deshabilitar:</strong> Casilla "Habilitado" por OLT</li>
+                                    <li><strong>Ver Estado:</strong> Columna "Estado" muestra última sincronización</li>
+                                    <li><strong>Eliminar OLT:</strong> Casilla "Eliminar" + guardar</li>
+                                </ul>
+                            </div>
+                            <div style="flex: 1;">
+                                <h5 style="margin: 0 0 5px 0; color: #dc3545;">⚠️ Información Importante:</h5>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 13px;">
+                                    <li>Solo OLTs <strong>habilitadas</strong> se sincronizarán</li>
+                                    <li>La sincronización respeta el <strong>intervalo configurado</strong></li>
+                                    <li>Errores se muestran en "Último Error"</li>
+                                    <li>Estados: ✅ Éxito, ❌ Error, ⏳ Pendiente</li>
+                                </ul>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f8f9fa; border-radius: 3px; padding: 10px; border-left: 4px solid #17a2b8;">
+                            <strong>🔄 Acciones Rápidas Disponibles:</strong><br>
+                            <span style="font-size: 12px; color: #666;">
+                                Usa las <strong>acciones en lote</strong> desde la lista de programaciones para:
+                                ➕ Agregar todas las OLTs | 🗑️ Limpiar OLTs | 🚀 Ejecutar inmediatamente
+                            </span>
+                        </div>
+                    </div>
+                `);
+            }
+        });
+    })(django.jQuery);
+    </script>
+    
+    <style>
+    .olt-selection-table tbody tr:hover {
+        background-color: #e8f4fd !important;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.2s ease;
+    }
+    
+    .olt-selection-table .field-olt select {
+        width: 200px;
+        padding: 5px;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+    }
+    
+    .olt-selection-table .field-habilitado input[type="checkbox"] {
+        transform: scale(1.2);
+    }
+    
+    .olt-selection-table .field-habilitado {
+        text-align: center;
+    }
+    
+    .olt-selection-table th {
+        background: #417690 !important;
+        color: white !important;
+        padding: 10px !important;
+        text-align: center;
+    }
+    
+    .olt-selection-table td {
+        padding: 8px !important;
+        text-align: center;
+        vertical-align: middle !important;
+    }
+    
+    /* Estilo para OLTs habilitadas */
+    .olt-selection-table tr:has(input[type="checkbox"]:checked) {
+        background: #d4edda !important;
+        border-color: #28a745 !important;
+    }
+    
+    /* Estilo para OLTs deshabilitadas */
+    .olt-selection-table tr:has(input[type="checkbox"]:not(:checked)) {
+        background: #f8d7da !important;
+        border-color: #dc3545 !important;
+    }
+    </style>
+{% endblock %}

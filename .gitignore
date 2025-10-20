@@ -1,0 +1,32 @@
+venv
+__pycache__logs/
+logs/
+config.ini
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv
+db.sqlite3
+celerybeat-schedule
+celerybeat-schedule.db
+
+# Logs de Celery
+*.log
+celery_*.log
+
+# PIDs
+pids/
+*.pid
+
+# Archivos temporales
+cookies.txt
+*.swp
+*.swo
+*~

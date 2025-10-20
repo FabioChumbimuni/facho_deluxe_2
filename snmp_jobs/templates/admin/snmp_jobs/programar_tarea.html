@@ -1,0 +1,1434 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_modify %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/widgets.css' %}">
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --border-color: #cccccc;
+            --hover-bg: #f5f5f5;
+            --disabled-bg: #eeeeee;
+            --error-color: #ba2121;
+            --error-bg: #fff0f0;
+            --primary-color: #79aec8;
+            --secondary-text: #666666;
+            --tertiary-text: #999999;
+            --shadow: rgba(0,0,0,0.2);
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #1e1e1e;
+                --text-color: #e0e0e0;
+                --border-color: #404040;
+                --hover-bg: #2d2d2d;
+                --disabled-bg: #333333;
+                --error-color: #ff6b6b;
+                --error-bg: #2d1b1b;
+                --primary-color: #4a9eff;
+                --secondary-text: #b0b0b0;
+                --tertiary-text: #808080;
+                --shadow: rgba(0,0,0,0.5);
+            }
+        }
+        
+        .readonly {
+            background-color: var(--disabled-bg) !important;
+            cursor: not-allowed !important;
+            pointer-events: none;
+        }
+        .selector {
+            width: 100%;
+            max-width: 900px;
+        }
+        .selector select {
+            width: 380px !important;
+            height: 300px !important;
+        }
+        .selector-available, .selector-chosen {
+            width: 380px !important;
+        }
+        .selector-available h2, .selector-chosen h2 {
+            background: var(--primary-color);
+            color: white;
+            padding: 8px;
+            margin: 0;
+            font-size: 13px;
+            font-weight: 400;
+        }
+        .selector-filter {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-width: 0 1px;
+            padding: 8px;
+        }
+        .selector-filter input {
+            width: 320px;
+            margin: 0;
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+        .selector-chooser {
+            width: 22px;
+            background-color: var(--disabled-bg);
+            border-radius: 10px;
+            margin: 10em 5px 0 5px;
+            padding: 0;
+        }
+        .selector-chooser li {
+            margin: 0;
+            padding: 3px;
+            list-style-type: none;
+        }
+        .selector select option {
+            padding: 3px 10px;
+        }
+        .loading {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .error-message {
+            color: var(--error-color);
+            background-color: var(--error-bg);
+            border: 1px solid var(--error-color);
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        /* Estilos para OLTs deshabilitadas */
+        .olt-disabled {
+            color: var(--error-color) !important;
+            font-style: italic;
+        }
+        .oid-search-results {
+            position: absolute !important;
+            top: 100% !important; /* Posicionar debajo del campo */
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 1000 !important;
+            background: #2c2c2c !important; /* Fondo gris oscuro */
+            border: 2px solid #4facfe !important; /* Borde azul */
+            border-top: none !important;
+            max-height: 250px !important; /* Altura aumentada */
+            overflow-y: auto !important;
+            width: 100% !important;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5) !important; /* Sombra más fuerte */
+            border-radius: 0 0 6px 6px !important; /* Bordes redondeados */
+        }
+        .oid-search-item {
+            padding: 10px 15px !important;
+            cursor: pointer !important;
+            border-bottom: 1px solid #4facfe !important; /* Borde azul */
+            color: white !important; /* Texto blanco */
+            font-size: 13px !important;
+            line-height: 1.4 !important;
+            transition: background-color 0.2s ease !important;
+        }
+        
+        .oid-search-item:hover {
+            background-color: #4facfe !important; /* Fondo azul al hover */
+            color: white !important;
+        }
+        
+        .oid-search-item:last-child {
+            border-bottom: none !important;
+        }
+        
+        .oid-search-item .oid-name {
+            font-weight: bold !important;
+            color: white !important;
+            margin-bottom: 2px !important;
+        }
+        
+        .oid-search-item .oid-value {
+            font-family: monospace !important;
+            color: #ccc !important; /* Gris claro */
+            font-size: 12px !important;
+            margin-bottom: 2px !important;
+        }
+        
+        .oid-search-item .oid-espacio {
+            color: #4facfe !important; /* Azul */
+            font-size: 11px !important;
+            font-style: italic !important;
+        }
+        .oid-search-item:hover {
+            background-color: var(--hover-bg);
+        }
+        
+        .oid-search-item.no-results {
+            color: var(--secondary-text);
+            font-style: italic;
+            text-align: center;
+            padding: 10px;
+        }
+        
+        /* Estilos para el dropdown nativo de Django Admin */
+        #id_oid {
+            width: 100%;
+            max-width: 600px;
+        }
+        
+        .oid-unified-container #id_oid {
+            width: 50% !important; /* Reducir ancho del campo más agresivamente */
+            max-width: 400px !important; /* Ancho máximo reducido */
+            padding-right: 40px !important; /* Espacio para el botón */
+            padding-left: 10px !important; /* Espacio interno izquierdo */
+            padding-top: 6px !important; /* Espacio interno superior */
+            padding-bottom: 6px !important; /* Espacio interno inferior */
+            font-size: 12px !important; /* Reducir tamaño de fuente */
+            line-height: 1.2 !important; /* Altura de línea reducida */
+            box-sizing: border-box !important; /* Incluir padding en el ancho total */
+            overflow: hidden !important; /* Ocultar overflow */
+            text-overflow: ellipsis !important; /* Mostrar ... si es muy largo */
+            white-space: nowrap !important; /* Mantener en una línea */
+            min-height: 32px !important; /* Altura mínima reducida */
+            border: 2px solid #4facfe !important; /* Borde más visible */
+            background-color: var(--bg-color) !important;
+            color: var(--text-color) !important;
+        }
+        
+        .oid-dropdown-btn {
+            position: absolute !important;
+            right: 5px !important; /* Muy cerca del borde */
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            background-color: #4facfe !important; /* Color azul visible */
+            border: 2px solid #4facfe !important; /* Borde azul */
+            color: white !important; /* Texto blanco */
+            font-size: 14px !important; /* Tamaño de fuente aumentado */
+            padding: 4px 8px !important; /* Padding aumentado */
+            cursor: pointer !important;
+            border-radius: 4px !important; /* Bordes redondeados */
+            z-index: 100 !important; /* Z-index muy alto */
+            height: 30px !important; /* Altura aumentada */
+            width: 30px !important; /* Ancho aumentado */
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3) !important; /* Sombra */
+        }
+        
+        .oid-dropdown-btn:hover {
+            background-color: #2196f3 !important; /* Azul más oscuro al hover */
+            border-color: #2196f3 !important;
+            transform: translateY(-50%) scale(1.05) !important; /* Efecto de zoom */
+        }
+        
+        .oid-dropdown-btn:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(79, 172, 254, 0.2);
+        }
+        
+        
+        .oid-search-item.selected {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        .oid-search-item .oid-name {
+            font-weight: bold;
+            color: inherit;
+        }
+        .oid-search-item .oid-value {
+            color: var(--secondary-text);
+            font-size: 0.9em;
+        }
+        .oid-search-item .oid-espacio {
+            color: var(--tertiary-text);
+            font-size: 0.8em;
+            font-style: italic;
+        }
+        .oid-search-item.selected .oid-value,
+        .oid-search-item.selected .oid-espacio {
+            color: #e0e0e0;
+        }
+        
+        /* Estilos adicionales para tema oscuro */
+        @media (prefers-color-scheme: dark) {
+            .form-row input[type="text"],
+            .form-row input[type="number"],
+            .form-row textarea,
+            .form-row select {
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                border-color: var(--border-color);
+            }
+            
+            .form-row input[type="text"]:focus,
+            .form-row input[type="number"]:focus,
+            .form-row textarea:focus,
+            .form-row select:focus {
+                border-color: var(--primary-color);
+                box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+            }
+            
+            .help {
+                color: var(--secondary-text);
+            }
+            
+            .field-oid_espacio_info input[readonly] {
+                background-color: var(--disabled-bg);
+                color: var(--secondary-text);
+            }
+            
+            /* Mejorar contraste en selectores */
+            .selector-available select,
+            .selector-chosen select {
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                border-color: var(--border-color);
+            }
+            
+            .selector-available option,
+            .selector-chosen option {
+                background-color: var(--bg-color);
+                color: var(--text-color);
+            }
+        }
+        
+        /* Estilos adicionales para tema oscuro */
+        .dark-theme {
+            --bg-color: #1e1e1e;
+            --text-color: #e0e0e0;
+            --border-color: #404040;
+            --hover-bg: #2d2d2d;
+            --disabled-bg: #333333;
+            --error-color: #ff6b6b;
+            --error-bg: #2d1b1b;
+            --primary-color: #4a9eff;
+            --secondary-text: #b0b0b0;
+            --tertiary-text: #808080;
+            --shadow: rgba(0,0,0,0.5);
+        }
+        
+        .dark-theme .form-row input[type="text"],
+        .dark-theme .form-row input[type="number"],
+        .dark-theme .form-row textarea,
+        .dark-theme .form-row select {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            border-color: var(--border-color);
+        }
+        
+        .dark-theme .form-row input[type="text"]:focus,
+        .dark-theme .form-row input[type="number"]:focus,
+        .dark-theme .form-row textarea:focus,
+        .dark-theme .form-row select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+        }
+        
+        .dark-theme .help {
+            color: var(--secondary-text);
+        }
+        
+        .dark-theme .field-oid_espacio_info input[readonly] {
+            background-color: var(--disabled-bg);
+            color: var(--secondary-text);
+        }
+        
+        .dark-theme .selector-available select,
+        .dark-theme .selector-chosen select {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            border-color: var(--border-color);
+        }
+        
+        .dark-theme .selector-available option,
+        .dark-theme .selector-chosen option {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+    </style>
+{% endblock %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {{ media }}
+    <script src="{% static 'admin/js/vendor/jquery/jquery.js' %}"></script>
+    <script src="{% static 'admin/js/jquery.init.js' %}"></script>
+    <script src="{% static 'admin/js/core.js' %}"></script>
+    <script src="{% static 'admin/js/admin/RelatedObjectLookups.js' %}"></script>
+    <script src="{% static 'admin/js/actions.js' %}"></script>
+    <script src="{% static 'admin/js/urlify.js' %}"></script>
+    <script src="{% static 'admin/js/prepopulate.js' %}"></script>
+    <script src="{% static 'admin/js/vendor/xregexp/xregexp.js' %}"></script>
+    <script src="{% static 'admin/js/SelectBox.js' %}"></script>
+    <script src="{% static 'admin/js/SelectFilter2.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    {% if is_edit %}
+        <h1>Editar Tarea SNMP: {{ original.nombre }}</h1>
+    {% else %}
+        <h1>{{ title }}</h1>
+    {% endif %}
+    
+    <!-- Mensaje de error global -->
+    <div id="global-error" class="error-message" style="display: none;"></div>
+    
+    <form method="post" id="snmp_job_form" novalidate>
+        {% csrf_token %}
+        <div>
+            <fieldset class="module aligned">
+                <div class="form-row field-nombre">
+                    <div>
+                        {{ form.nombre.errors }}
+                        {{ form.nombre.label_tag }}
+                        {{ form.nombre }}
+                        {% if form.nombre.help_text %}
+                            <div class="help">{{ form.nombre.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-descripcion">
+                    <div>
+                        {{ form.descripcion.errors }}
+                        {{ form.descripcion.label_tag }}
+                        {{ form.descripcion }}
+                        {% if form.descripcion.help_text %}
+                            <div class="help">{{ form.descripcion.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-marca">
+                    <div>
+                        {{ form.marca.errors }}
+                        {{ form.marca.label_tag }}
+                        {{ form.marca }}
+                        {% if form.marca.help_text %}
+                            <div class="help">{{ form.marca.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="module aligned">
+                <h2>Selección de OLTs y OIDs</h2>
+                <div class="form-row field-olts">
+                    <div>
+                        {{ form.olts.errors }}
+                        <label for="id_olts">OLTs:</label>
+                        <div class="selector">
+                            <div class="selector-available">
+                                <h2>OLTs Disponibles</h2>
+                                <p class="selector-filter">
+                                    <input type="text" placeholder="Filtrar" class="selector-filter-input">
+                                </p>
+                                <select multiple="multiple" class="filtered" id="id_olts_from" style="height: 300px; width: 380px;">
+                                </select>
+                                <a href="#" class="selector-chooseall">Seleccionar todos</a>
+                            </div>
+                            <ul class="selector-chooser">
+                                <li><a href="#" class="selector-add" title="Elegir">›</a></li>
+                                <li><a href="#" class="selector-remove" title="Quitar">‹</a></li>
+                            </ul>
+                            <div class="selector-chosen">
+                                <h2>OLTs Seleccionadas</h2>
+                                <select multiple="multiple" id="id_olts" name="olts" class="filtered" style="height: 300px; width: 380px;" required>
+                                </select>
+                                <a href="#" class="selector-clearall">Quitar todos</a>
+                            </div>
+                        </div>
+                        {% if form.olts.help_text %}
+                            <div class="help">{{ form.olts.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-oid">
+                    <div>
+                        {{ form.oid.errors }}
+                        {{ form.oid.label_tag }}
+                        {{ form.oid }}
+                        {% if form.oid.help_text %}
+                            <div class="help">{{ form.oid.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-oid_espacio_info">
+                    <div>
+                        {{ form.oid_espacio_info.errors }}
+                        {{ form.oid_espacio_info.label_tag }}
+                        {{ form.oid_espacio_info }}
+                        {% if form.oid_espacio_info.help_text %}
+                            <div class="help">{{ form.oid_espacio_info.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="module aligned">
+                <h2>Configuración de la Tarea</h2>
+                <div class="form-row field-interval_raw">
+                    <div>
+                        {{ form.interval_raw.errors }}
+                        {{ form.interval_raw.label_tag }}
+                        {{ form.interval_raw }}
+                        {% if form.interval_raw.help_text %}
+                            <div class="help">{{ form.interval_raw.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-cron_expr">
+                    <div>
+                        {{ form.cron_expr.errors }}
+                        {{ form.cron_expr.label_tag }}
+                        {{ form.cron_expr }}
+                        {% if form.cron_expr.help_text %}
+                            <div class="help">{{ form.cron_expr.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-schedule_description">
+                    <div>
+                        {{ form.schedule_description.errors }}
+                        {{ form.schedule_description.label_tag }}
+                        {{ form.schedule_description }}
+                        {% if form.schedule_description.help_text %}
+                            <div class="help">{{ form.schedule_description.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-job_type">
+                    <div>
+                        {{ form.job_type.errors }}
+                        {{ form.job_type.label_tag }}
+                        {{ form.job_type }}
+                        {% if form.job_type.help_text %}
+                            <div class="help">{{ form.job_type.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="form-row field-enabled">
+                    <div>
+                        {{ form.enabled.errors }}
+                        {{ form.enabled.label_tag }}
+                        {{ form.enabled }}
+                        {% if form.enabled.help_text %}
+                            <div class="help">{{ form.enabled.help_text|safe }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </fieldset>
+        </div>
+        <div class="submit-row">
+            <input type="submit" value="Guardar" class="default" name="_save">
+        </div>
+    </form>
+</div>
+
+<script>
+(function($) {
+    'use strict';
+    
+    // Variables globales
+    var isUpdating = false;
+    var currentMarcaId = null;
+    
+    $(document).ready(function() {
+        // Inicializar
+        initializeForm();
+        
+        // Configurar tema oscuro dinámico
+        setupDarkTheme();
+        
+        // Event listeners
+        setupEventListeners();
+        
+        // Cargar datos iniciales
+        loadInitialData();
+        
+        // Configurar actualización dinámica del dropdown OID
+        setupOIDDropdown();
+        
+        // Cargar espacio del OID inicial si estamos editando
+        loadInitialOIDSpace();
+    });
+    
+    function initializeForm() {
+        // Obtener marca inicial
+        currentMarcaId = $('#id_marca').val();
+        
+        // Configurar validación del formulario
+        $('#snmp_job_form').on('submit', function(e) {
+            return validateForm(e);
+        });
+    }
+    
+    function setupEventListeners() {
+        // Cambio de marca - solo si no es readonly
+        $('#id_marca').off('change').on('change', function() {
+            // Verificar si el campo está en modo readonly (edición de tarea existente)
+            if ($(this).prop('readonly')) {
+                return; // No permitir cambios si es readonly
+            }
+            
+            var marcaId = $(this).val();
+            if (marcaId && marcaId !== currentMarcaId) {
+                currentMarcaId = marcaId;
+                updateFormForBrand(marcaId);
+            }
+        });
+        
+        // Botones del selector dual
+        setupSelectorButtons();
+        
+        // Filtro de búsqueda
+        setupFilterInput();
+        
+        // Configurar descripción del horario
+        setupScheduleDescription();
+        
+        // Inicializar botón dropdown con un pequeño delay para asegurar que esté disponible
+        setTimeout(function() {
+            console.log('DEBUG: Inicializando botón dropdown en setupEventListeners');
+            $('#oid-dropdown-btn').off('click.oidsearch').on('click.oidsearch', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('DEBUG: Click en botón dropdown detectado (setupEventListeners)');
+                if (currentMarcaId) {
+                    console.log('DEBUG: Cargando lista inicial de OIDs desde botón para marca ID:', currentMarcaId);
+                    loadInitialOIDList();
+                } else {
+                    console.log('DEBUG: No hay marca seleccionada, mostrando mensaje');
+                    displaySearchResults([{ oid: '', nombre: 'Seleccione una marca primero', espacio_display: '' }], true);
+                }
+            });
+        }, 200);
+    }
+    
+    function setupOIDDropdown() {
+        // Configurar actualización del dropdown OID cuando cambie la marca
+        $('#id_marca').on('change', function() {
+            var marcaId = $(this).val();
+            var oidSelect = $('#id_oid');
+            
+            // Limpiar el dropdown OID
+            oidSelect.empty();
+            oidSelect.append('<option value="">Seleccione una marca primero</option>');
+            
+            if (marcaId) {
+                // Cargar OIDs para la marca seleccionada
+                $.ajax({
+                    url: '{% url "admin:snmp_jobs_snmpjob_get_oids_for_marca" %}',
+                    data: {
+                        'marca_id': marcaId
+                    },
+                    success: function(response) {
+                        oidSelect.empty();
+                        oidSelect.append('<option value="">Seleccione un OID</option>');
+                        
+                        response.oids.forEach(function(oid) {
+                            oidSelect.append('<option value="' + oid.id + '">' + oid.text + '</option>');
+                        });
+                    },
+                    error: function() {
+                        console.log('Error al cargar OIDs');
+                    }
+                });
+            }
+        });
+        
+        // Configurar actualización del espacio del OID cuando se seleccione un OID
+        $('#id_oid').on('change', function() {
+            var oidId = $(this).val();
+            var espacioField = $('#id_oid_espacio_info');
+            
+            if (oidId) {
+                // Obtener información del OID seleccionado via AJAX
+                $.ajax({
+                    url: '{% url "admin:snmp_jobs_snmpjob_get_oids_for_marca" %}',
+                    data: {
+                        'marca_id': $('#id_marca').val()
+                    },
+                    success: function(response) {
+                        var selectedOid = response.oids.find(function(oid) {
+                            return oid.id == oidId;
+                        });
+                        
+                        if (selectedOid) {
+                            espacioField.val(selectedOid.espacio_display || selectedOid.espacio);
+                        } else {
+                            espacioField.val('Espacio no disponible');
+                        }
+                    },
+                    error: function() {
+                        espacioField.val('Error al cargar información');
+                    }
+                });
+            } else {
+                espacioField.val('');
+            }
+        });
+    }
+    
+    function loadInitialOIDSpace() {
+        // Si estamos editando y hay un OID seleccionado, cargar su espacio
+        var oidId = $('#id_oid').val();
+        var marcaId = $('#id_marca').val();
+        
+        if (oidId && marcaId) {
+            $.ajax({
+                url: '{% url "admin:snmp_jobs_snmpjob_get_oids_for_marca" %}',
+                data: {
+                    'marca_id': marcaId
+                },
+                success: function(response) {
+                    var selectedOid = response.oids.find(function(oid) {
+                        return oid.id == oidId;
+                    });
+                    
+                    if (selectedOid) {
+                        $('#id_oid_espacio_info').val(selectedOid.espacio_display || selectedOid.espacio);
+                    }
+                },
+                error: function() {
+                    console.log('Error al cargar espacio del OID inicial');
+                }
+            });
+        }
+    }
+    
+    function setupSelectorButtons() {
+        // Botón agregar
+        $('.selector-add').off('click').on('click', function(e) {
+            e.preventDefault();
+            moveSelectedOptions('#id_olts_from', '#id_olts');
+        });
+        
+        // Botón quitar
+        $('.selector-remove').off('click').on('click', function(e) {
+            e.preventDefault();
+            moveSelectedOptions('#id_olts', '#id_olts_from');
+        });
+        
+        // Botón seleccionar todos
+        $('.selector-chooseall').off('click').on('click', function(e) {
+            e.preventDefault();
+            moveAllOptions('#id_olts_from', '#id_olts');
+        });
+        
+        // Botón quitar todos
+        $('.selector-clearall').off('click').on('click', function(e) {
+            e.preventDefault();
+            moveAllOptions('#id_olts', '#id_olts_from');
+        });
+        
+        // Doble clic en opciones
+        $('#id_olts_from').off('dblclick').on('dblclick', 'option', function() {
+            moveSelectedOptions('#id_olts_from', '#id_olts');
+        });
+        
+        $('#id_olts').off('dblclick').on('dblclick', 'option', function() {
+            moveSelectedOptions('#id_olts', '#id_olts_from');
+        });
+    }
+    
+    function setupFilterInput() {
+        $('.selector-filter-input').off('input').on('input', function() {
+            var filter = this.value.toLowerCase();
+            var selectFrom = $('#id_olts_from');
+            
+            selectFrom.find('option').each(function() {
+                var text = $(this).text().toLowerCase();
+                $(this).toggle(text.includes(filter));
+            });
+        });
+    }
+    
+    function updateFormForBrand(marcaId) {
+        if (isUpdating) return;
+        
+        isUpdating = true;
+        showLoading(true);
+        hideGlobalError();
+        
+        // Actualizar OLTs y OIDs en paralelo
+        Promise.all([
+            updateOLTs(marcaId),
+            updateOIDs(marcaId)
+        ]).then(function() {
+            console.log('Formulario actualizado para marca:', marcaId);
+        }).catch(function(error) {
+            console.error('Error al actualizar formulario:', error);
+            showGlobalError('Error al cargar datos para la marca seleccionada. Por favor, intente nuevamente.');
+        }).finally(function() {
+            isUpdating = false;
+            showLoading(false);
+        });
+    }
+    
+    function updateOLTs(marcaId) {
+        return new Promise(function(resolve, reject) {
+            $.getJSON('{% url "admin:snmp_jobs_snmpjob_get_olts" %}', { marca_id: marcaId })
+                .done(function(data) {
+                    try {
+                        populateOLTSelectors(data.results);
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                })
+                .fail(function(jqXHR, textStatus, errorThrown) {
+                    reject(new Error('Error al cargar OLTs: ' + textStatus));
+                });
+        });
+    }
+    
+    function updateOIDs(marcaId) {
+        return new Promise(function(resolve, reject) {
+            $.getJSON('{% url "admin:snmp_jobs_snmpjob_get_oids" %}', { marca_id: marcaId })
+                .done(function(data) {
+                    try {
+                        populateOIDSelector(data.results);
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                })
+                .fail(function(jqXHR, textStatus, errorThrown) {
+                    reject(new Error('Error al cargar OIDs: ' + textStatus));
+                });
+        });
+    }
+    
+    function populateOLTSelectors(oltsData) {
+        var selectFrom = $('#id_olts_from');
+        var selectTo = $('#id_olts');
+        
+        // Limpiar selectores
+        selectFrom.empty();
+        selectTo.empty();
+        
+        // Agregar opciones
+        oltsData.forEach(function(item) {
+            var option = new Option(item.text, item.id);
+            option.title = item.text;
+            
+            // Aplicar estilos si la OLT está deshabilitada
+            if (item.enabled === false) {
+                option.classList.add('olt-disabled');
+                option.text = item.text + ' (Deshabilitada)';
+            }
+            
+            selectFrom.append(option);
+        });
+        
+        // Ordenar opciones
+        sortSelectOptions(selectFrom[0]);
+    }
+    
+    function populateOIDSelector(oidsData) {
+        var oidSelect = $('#id_oid');
+        
+        // Limpiar selector
+        oidSelect.empty();
+        
+        // Agregar opción vacía
+        oidSelect.append(new Option('--------', ''));
+        
+        // Agregar opciones
+        oidsData.forEach(function(item) {
+            var option = new Option(item.text, item.id);
+            option.title = item.text;
+            oidSelect.append(option);
+        });
+        
+        // Ordenar opciones
+        sortSelectOptions(oidSelect[0]);
+        
+        // Trigger change event
+        oidSelect.trigger('change');
+    }
+    
+    function moveSelectedOptions(fromSelector, toSelector) {
+        var from = $(fromSelector);
+        var to = $(toSelector);
+        var selected = from.find('option:selected');
+        
+        if (selected.length === 0) return;
+        
+        selected.each(function() {
+            // Verificar si es una OLT deshabilitada en creación
+            if (isCreationMode() && $(this).hasClass('olt-disabled')) {
+                showGlobalError('No se pueden seleccionar OLTs deshabilitadas en nuevas tareas.');
+                return;
+            }
+            to.append(this);
+        });
+        
+        sortSelectOptions(to[0]);
+    }
+    
+    function moveAllOptions(fromSelector, toSelector) {
+        var from = $(fromSelector);
+        var to = $(toSelector);
+        var options = from.find('option:visible');
+        
+        if (options.length === 0) return;
+        
+        options.each(function() {
+            // Verificar si es una OLT deshabilitada en creación
+            if (isCreationMode() && $(this).hasClass('olt-disabled')) {
+                return; // Saltar OLTs deshabilitadas en creación
+            }
+            to.append(this);
+        });
+        
+        sortSelectOptions(to[0]);
+    }
+    
+    function sortSelectOptions(select) {
+        var options = Array.from(select.options);
+        options.sort(function(a, b) {
+            return a.text.localeCompare(b.text);
+        });
+        
+        // Limpiar y reinsertar opciones ordenadas
+        select.innerHTML = '';
+        options.forEach(function(option) {
+            select.appendChild(option);
+        });
+    }
+    
+    function loadInitialData() {
+        var initialMarca = $('#id_marca').val();
+        var oltsData = {{ olts_data|safe }};
+        var oidsData = {{ oids_data|safe }};
+        
+        if (initialMarca && oltsData.length > 0) {
+            populateOLTSelectors(oltsData);
+            
+            // Marcar OLTs seleccionadas
+            var selectedOlts = oltsData.filter(function(item) { return item.selected; });
+            selectedOlts.forEach(function(item) {
+                var option = $('#id_olts_from option[value="' + item.id + '"]');
+                if (option.length > 0) {
+                    $('#id_olts').append(option.detach());
+                }
+            });
+        }
+        
+        if (initialMarca && oidsData.length > 0) {
+            populateOIDSelector(oidsData);
+            
+            // Marcar OID seleccionado
+            var selectedOid = oidsData.find(function(item) { return item.selected; });
+            if (selectedOid) {
+                $('#id_oid').val(selectedOid.id);
+            }
+        }
+        
+        // Actualizar descripción del horario al cargar la página
+        updateScheduleDescription();
+        
+        // Cargar información del OID inicial
+        loadInitialOID();
+    }
+    
+    function validateForm(e) {
+        var selectedOlts = $('#id_olts option');
+        
+        if (selectedOlts.length === 0) {
+            e.preventDefault();
+            showGlobalError('Debe seleccionar al menos una OLT.');
+            return false;
+        }
+        
+        // Asegurar que todas las opciones en el select derecho estén seleccionadas
+        selectedOlts.each(function() {
+            this.selected = true;
+        });
+        
+        return true;
+    }
+    
+    function showLoading(show) {
+        if (show) {
+            $('.selector').addClass('loading');
+            $('#id_oid').addClass('loading');
+        } else {
+            $('.selector').removeClass('loading');
+            $('#id_oid').removeClass('loading');
+        }
+    }
+    
+    function showGlobalError(message) {
+        $('#global-error').text(message).show();
+        $('html, body').animate({
+            scrollTop: $('#global-error').offset().top - 100
+        }, 500);
+    }
+    
+    function hideGlobalError() {
+        $('#global-error').hide();
+    }
+    
+    function isCreationMode() {
+        // Verificar si estamos en modo creación (no edición)
+        return !{{ is_edit|yesno:"true,false" }};
+    }
+    
+    // Funciones para actualizar descripción del horario en tiempo real
+    function setupScheduleDescription() {
+        $('#id_interval_raw, #id_cron_expr').off('input change').on('input change', function() {
+            updateScheduleDescription();
+        });
+    }
+    
+    function updateScheduleDescription() {
+        var intervalRaw = $('#id_interval_raw').val().trim();
+        var cronExpr = $('#id_cron_expr').val().trim();
+        
+        // Limpiar el otro campo si uno está lleno
+        if (intervalRaw && cronExpr) {
+            if ($(this).attr('id') === 'id_interval_raw') {
+                $('#id_cron_expr').val('');
+                cronExpr = '';
+            } else {
+                $('#id_interval_raw').val('');
+                intervalRaw = '';
+            }
+        }
+        
+        var description = '';
+        
+        if (cronExpr) {
+            description = parseCronDescription(cronExpr);
+        } else if (intervalRaw) {
+            description = parseIntervalDescription(intervalRaw);
+        } else {
+            description = 'Sin programación definida';
+        }
+        
+        $('#id_schedule_description').val(description);
+    }
+    
+    function parseCronDescription(cronExpr) {
+        try {
+            var parts = cronExpr.split(' ');
+            if (parts.length === 5) {
+                var minute = parts[0];
+                var hour = parts[1];
+                var day = parts[2];
+                var month = parts[3];
+                var weekday = parts[4];
+                
+                // Caso: */30 * * * * (cada 30 minutos)
+                if (minute === "*/30" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada 30 minutos";
+                }
+                
+                // Caso: */15 * * * * (cada 15 minutos)
+                else if (minute === "*/15" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada 15 minutos";
+                }
+                
+                // Caso: */10 * * * * (cada 10 minutos)
+                else if (minute === "*/10" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada 10 minutos";
+                }
+                
+                // Caso: */5 * * * * (cada 5 minutos)
+                else if (minute === "*/5" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada 5 minutos";
+                }
+                
+                // Caso: * * * * * (cada minuto)
+                else if (minute === "*" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada minuto";
+                }
+                
+                // Caso: 0 * * * * (cada hora)
+                else if (minute === "0" && hour === "*" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada hora";
+                }
+                
+                // Caso: 0 0 * * * (cada día a medianoche)
+                else if (minute === "0" && hour === "0" && day === "*" && month === "*" && weekday === "*") {
+                    return "Cada día a medianoche";
+                }
+                
+                // Caso: 0 8 * * * (todos los días a las 8:00 AM)
+                else if (minute === "0" && hour !== "*" && day === "*" && month === "*" && weekday === "*") {
+                    var hourInt = parseInt(hour);
+                    if (hourInt === 0) {
+                        return "Todos los días a medianoche";
+                    } else if (hourInt === 12) {
+                        return "Todos los días a mediodía";
+                    } else if (hourInt > 12) {
+                        return "Todos los días a las " + (hourInt - 12) + ":00 PM";
+                    } else {
+                        return "Todos los días a las " + hour + ":00 AM";
+                    }
+                }
+                
+                // Caso: 30 8 * * * (todos los días a las 8:30 AM)
+                else if (minute !== "0" && minute !== "*" && hour !== "*" && day === "*" && month === "*" && weekday === "*") {
+                    var hourInt = parseInt(hour);
+                    var minuteInt = parseInt(minute);
+                    if (hourInt === 0) {
+                        return "Todos los días a las 12:" + (minuteInt < 10 ? "0" : "") + minuteInt + " AM";
+                    } else if (hourInt === 12) {
+                        return "Todos los días a las 12:" + (minuteInt < 10 ? "0" : "") + minuteInt + " PM";
+                    } else if (hourInt > 12) {
+                        return "Todos los días a las " + (hourInt - 12) + ":" + (minuteInt < 10 ? "0" : "") + minuteInt + " PM";
+                    } else {
+                        return "Todos los días a las " + hour + ":" + (minuteInt < 10 ? "0" : "") + minuteInt + " AM";
+                    }
+                }
+                
+                // Caso: 0 8 * * 1 (lunes a las 8:00 AM)
+                else if (minute === "0" && hour !== "*" && day === "*" && month === "*" && weekday !== "*") {
+                    var weekdays = {
+                        "0": "domingo", "1": "lunes", "2": "martes", "3": "miércoles",
+                        "4": "jueves", "5": "viernes", "6": "sábado", "7": "domingo"
+                    };
+                    var weekdayName = weekdays[weekday] || weekday;
+                    var hourInt = parseInt(hour);
+                    if (hourInt === 0) {
+                        return "Cada " + weekdayName + " a medianoche";
+                    } else if (hourInt === 12) {
+                        return "Cada " + weekdayName + " a mediodía";
+                    } else if (hourInt > 12) {
+                        return "Cada " + weekdayName + " a las " + (hourInt - 12) + ":00 PM";
+                    } else {
+                        return "Cada " + weekdayName + " a las " + hour + ":00 AM";
+                    }
+                }
+                
+                else {
+                    return "Programado con cron: " + cronExpr;
+                }
+            } else {
+                return "Expresión cron: " + cronExpr;
+            }
+        } catch (e) {
+            return "Error en cron: " + cronExpr;
+        }
+    }
+    
+    function parseIntervalDescription(intervalRaw) {
+        try {
+            var value = intervalRaw.replace(/\D/g, '');
+            var unit = intervalRaw.replace(/\d/g, '').toLowerCase();
+            
+            if (unit === 's') {
+                return "Cada " + value + " segundo" + (value != 1 ? "s" : "");
+            } else if (unit === 'm') {
+                return "Cada " + value + " minuto" + (value != 1 ? "s" : "");
+            } else if (unit === 'h') {
+                return "Cada " + value + " hora" + (value != 1 ? "s" : "");
+            } else {
+                return "Intervalo: " + intervalRaw;
+            }
+        } catch (e) {
+            return "Intervalo: " + intervalRaw;
+        }
+    }
+    
+    // Función para configurar la actualización del espacio del OID
+    function setupOIDEspacioInfo() {
+        $('#id_oid').off('change').on('change', function() {
+            updateOIDEspacioInfo();
+        });
+        
+        // Actualizar al cargar la página si ya hay un OID seleccionado
+        updateOIDEspacioInfo();
+    }
+    
+    function updateOIDEspacioInfo() {
+        var oidId = $('#id_oid').val();
+        var espacioInfoField = $('#id_oid_espacio_info');
+        
+        if (oidId) {
+            // Buscar en los datos disponibles usando el ID
+            var oidsData = {{ oids_data|safe }};
+            var selectedOid = oidsData.find(function(item) {
+                return item.id == oidId;
+            });
+
+            if (selectedOid && selectedOid.espacio) {
+                var espacioText = selectedOid.espacio;
+                var espacioDisplay = '';
+                
+                // Mapear códigos a texto legible
+                switch(espacioText) {
+                    case 'descubrimiento':
+                        espacioDisplay = 'Descubrimiento - Llena tablas de discovery (OnuStatus, OnuInventory)';
+                        break;
+                    case 'descripcion':
+                        espacioDisplay = 'Descripción - Información descriptiva de ONUs';
+                        break;
+                    case 'mac':
+                        espacioDisplay = 'MAC - Direcciones MAC de ONUs';
+                        break;
+                    case 'inventario':
+                        espacioDisplay = 'Inventario - Información de inventario';
+                        break;
+                    case 'estado':
+                        espacioDisplay = 'Estado - Estados de ONUs';
+                        break;
+                    case 'configuracion':
+                        espacioDisplay = 'Configuración - Parámetros de configuración';
+                        break;
+                    case 'estadisticas':
+                        espacioDisplay = 'Estadísticas - Datos estadísticos';
+                        break;
+                    case 'otro':
+                        espacioDisplay = 'Otro - Otros tipos de información';
+                        break;
+                    default:
+                        espacioDisplay = espacioText;
+                }
+                
+                espacioInfoField.val(espacioDisplay);
+            } else {
+                espacioInfoField.val('Espacio no disponible');
+            }
+        } else {
+            espacioInfoField.val('');
+        }
+    }
+    
+    // Función para configurar el buscador de OIDs
+    function setupOIDSearch() {
+        var searchTimeout;
+        var currentMarcaId = null;
+        
+        // Obtener marca actual
+        updateMarcaForOIDSearch();
+        
+        // Configurar evento de cambio de marca
+        $('#id_marca').off('change.oidsearch').on('change.oidsearch', function() {
+            updateMarcaForOIDSearch();
+            // Cargar lista inicial de OIDs cuando se selecciona una marca
+            loadInitialOIDList();
+        });
+        
+        // Configurar evento de clic en el botón dropdown
+        $('#oid-dropdown-btn').off('click.oidsearch').on('click.oidsearch', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('DEBUG: Click en botón dropdown detectado');
+            if (currentMarcaId) {
+                console.log('DEBUG: Cargando lista inicial de OIDs desde botón para marca ID:', currentMarcaId);
+                loadInitialOIDList();
+            } else {
+                console.log('DEBUG: No hay marca seleccionada, mostrando mensaje');
+                displaySearchResults([{ oid: '', nombre: 'Seleccione una marca primero', espacio_display: '' }], true);
+            }
+        });
+        
+        // Configurar evento de clic en el campo OID para mostrar lista
+        $('#id_oid').off('click.oidsearch').on('click.oidsearch', function() {
+            console.log('DEBUG: Click en campo OID detectado');
+            if (currentMarcaId) {
+                console.log('DEBUG: Cargando lista inicial de OIDs');
+                loadInitialOIDList();
+            } else {
+                console.log('DEBUG: No hay marca seleccionada');
+            }
+        });
+        
+        // Configurar evento de búsqueda
+        $('#id_oid').off('input.oidsearch keydown.oidsearch').on('input.oidsearch keydown.oidsearch', function(e) {
+            var input = $(this);
+            var query = input.val().trim();
+            
+            // Manejar navegación con teclado
+            if (e.keyCode === 38 || e.keyCode === 40) { // Flechas arriba/abajo
+                e.preventDefault();
+                navigateSearchResults(e.keyCode === 40 ? 1 : -1);
+                return;
+            }
+            
+            if (e.keyCode === 13) { // Enter
+                e.preventDefault();
+                selectFirstResult();
+                return;
+            }
+            
+            if (e.keyCode === 27) { // Escape
+                hideSearchResults();
+                return;
+            }
+            
+            // Limpiar timeout anterior
+            clearTimeout(searchTimeout);
+            
+            if (query.length >= 2) {
+                // Buscar después de 300ms de inactividad
+                searchTimeout = setTimeout(function() {
+                    searchOIDs(query);
+                }, 300);
+            } else if (query.length === 0 && currentMarcaId) {
+                // Si el campo está vacío, mostrar todos los OIDs de la marca
+                loadInitialOIDList();
+            } else {
+                hideSearchResults();
+            }
+        });
+        
+        // Ocultar resultados al hacer clic fuera
+        $(document).off('click.oidsearch').on('click.oidsearch', function(e) {
+            if (!$(e.target).closest('.oid-unified-container').length) {
+                hideSearchResults();
+            }
+        });
+        
+        // Cargar OID inicial si estamos editando
+        loadInitialOID();
+    }
+    
+    function updateMarcaForOIDSearch() {
+        currentMarcaId = $('#id_marca').val();
+    }
+    
+    // Función para configurar tema oscuro dinámico
+    function setupDarkTheme() {
+        // Detectar preferencia de tema del sistema
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+        
+        // Función para aplicar tema
+        function applyTheme(isDark) {
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        }
+        
+        // Aplicar tema inicial
+        applyTheme(prefersDark.matches);
+        
+        // Escuchar cambios en la preferencia
+        prefersDark.addEventListener('change', (e) => {
+            applyTheme(e.matches);
+        });
+    }
+    
+    function selectFirstResult() {
+        var firstItem = $('#oid-search-results .oid-search-item').first();
+        if (firstItem.length) {
+            var oidId = firstItem.data('oid-id');
+            var oidData = getOIDDataFromResults(oidId);
+            if (oidData) {
+                selectOID(oidData);
+            }
+        }
+    }
+    
+    function getOIDDataFromResults(oidId) {
+        var item = $('#oid-search-results .oid-search-item[data-oid-id="' + oidId + '"]');
+        if (item.length) {
+            return {
+                id: oidId,
+                nombre: item.find('.oid-name').text(),
+                oid: item.find('.oid-value').text(),
+                espacio_display: item.find('.oid-espacio').text().replace('Espacio: ', '')
+            };
+        }
+        return null;
+    }
+    
+    function selectOID(oid) {
+        $('#id_oid').val(oid.id);
+        
+        // Actualizar información del espacio
+        updateOIDEspacioInfoFromData(oid);
+        
+        hideSearchResults();
+    }
+    
+    function updateOIDEspacioInfoFromData(oid) {
+        var espacioInfoField = $('#id_oid_espacio_info');
+        var espacioDisplay = '';
+        
+        // Mapear códigos a texto legible
+        switch(oid.espacio_display) {
+            case 'Descubrimiento':
+                espacioDisplay = 'Descubrimiento - Llena tablas de discovery (OnuStatus, OnuInventory)';
+                break;
+            case 'Descripción':
+                espacioDisplay = 'Descripción - Información descriptiva de ONUs';
+                break;
+            case 'MAC':
+                espacioDisplay = 'MAC - Direcciones MAC de ONUs';
+                break;
+            case 'Inventario':
+                espacioDisplay = 'Inventario - Información de inventario';
+                break;
+            case 'Estado':
+                espacioDisplay = 'Estado - Estados de ONUs';
+                break;
+            case 'Configuración':
+                espacioDisplay = 'Configuración - Parámetros de configuración';
+                break;
+            case 'Estadísticas':
+                espacioDisplay = 'Estadísticas - Datos estadísticos';
+                break;
+            case 'Otro':
+                espacioDisplay = 'Otro - Otros tipos de información';
+                break;
+            default:
+                espacioDisplay = oid.espacio_display;
+        }
+        
+        espacioInfoField.val(espacioDisplay);
+    }
+    
+    function loadInitialOID() {
+        // Si estamos editando y hay un OID seleccionado, cargar su información
+        var oidId = $('#id_oid').val();
+        if (oidId) {
+            // Buscar en los datos disponibles usando el ID
+            var oidsData = {{ oids_data|safe }};
+            var selectedOid = oidsData.find(function(item) {
+                return item.id == oidId;
+            });
+            
+            if (selectedOid) {
+                updateOIDEspacioInfoFromData({
+                    espacio_display: selectedOid.espacio_display || selectedOid.espacio
+                });
+            }
+        }
+    }
+    
+    // Función para configurar tema oscuro dinámico
+    function setupDarkTheme() {
+        // Detectar preferencia de tema del sistema
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+        
+        // Función para aplicar tema
+        function applyTheme(isDark) {
+            if (isDark) {
+                document.documentElement.classList.add('dark-theme');
+            } else {
+                document.documentElement.classList.remove('dark-theme');
+            }
+        }
+        
+        // Aplicar tema inicial
+        applyTheme(prefersDark.matches);
+        
+        // Escuchar cambios de tema
+        prefersDark.addEventListener('change', function(e) {
+            applyTheme(e.matches);
+        });
+        
+        // Detectar tema desde localStorage si está disponible
+        const savedTheme = localStorage.getItem('admin-theme');
+        if (savedTheme) {
+            applyTheme(savedTheme === 'dark');
+        }
+    }
+    
+})(django.jQuery);
+</script>
+{% endblock %}

@@ -1,0 +1,475 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        /* Tema Claro (default) */
+        body {
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        .intro-text {
+            color: #666;
+        }
+        
+        .doc-section {
+            background: white;
+            border-left: 4px solid #007bff;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .doc-section.discovery {
+            border-left-color: #28a745;
+        }
+        .doc-section.get {
+            border-left-color: #007bff;
+        }
+        .doc-section.walk {
+            border-left-color: #ffc107;
+        }
+        .doc-section.bulk {
+            border-left-color: #fd7e14;
+        }
+        .doc-section.table {
+            border-left-color: #6f42c1;
+        }
+        .doc-section h2 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+            transition: color 0.3s, border-color 0.3s;
+        }
+        .doc-section .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            margin-right: 8px;
+        }
+        .badge.discovery { background: #28a745; }
+        .badge.get { background: #007bff; }
+        .badge.walk { background: #ffc107; color: #333; }
+        .badge.bulk { background: #fd7e14; }
+        .badge.table { background: #6f42c1; }
+        .doc-content ul {
+            line-height: 2;
+        }
+        .doc-content ul li {
+            margin: 8px 0;
+        }
+        .code {
+            background: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 13px;
+            color: #495057;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .flow-diagram {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            font-family: monospace;
+            font-size: 13px;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+        }
+        .warning-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+            color: #856404;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+        }
+        .info-box {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+            color: #0c5460;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+        }
+        
+        /* TEMA OSCURO - Sincronizado con Django Admin */
+        html[data-theme="dark"] body,
+        html[data-theme="dark"] #content {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] .doc-section {
+            background: #2d2d2d;
+            color: #e0e0e0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        }
+        
+        html[data-theme="dark"] .doc-section h2 {
+            color: #f0f0f0;
+            border-bottom-color: #444;
+        }
+        
+        html[data-theme="dark"] .doc-section h3 {
+            color: #d0d0d0;
+        }
+        
+        html[data-theme="dark"] .code {
+            background: #1a1a1a;
+            color: #a0d468;
+        }
+        
+        html[data-theme="dark"] .flow-diagram {
+            background: #1a1a1a;
+            border-color: #444;
+            color: #d0d0d0;
+        }
+        
+        html[data-theme="dark"] .warning-box {
+            background: #3d3000;
+            border-color: #ffc107;
+            color: #ffd54f;
+        }
+        
+        html[data-theme="dark"] .info-box {
+            background: #003545;
+            border-color: #17a2b8;
+            color: #5ddef4;
+        }
+        
+        html[data-theme="dark"] .badge.walk {
+            color: #1a1a1a;
+        }
+        
+        html[data-theme="dark"] table {
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] table thead tr {
+            background: #3d3d3d !important;
+        }
+        
+        html[data-theme="dark"] table tbody td {
+            border-color: #444 !important;
+        }
+        
+        html[data-theme="dark"] table tbody tr:hover {
+            background: #3d3d3d !important;
+        }
+        
+        html[data-theme="dark"] .breadcrumbs {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+        
+        html[data-theme="dark"] .breadcrumbs a {
+            color: #5dade2;
+        }
+        
+        html[data-theme="dark"] h1 {
+            color: #f0f0f0;
+        }
+        
+        html[data-theme="dark"] .intro-text {
+            color: #c0c0c0 !important;
+        }
+        
+        html[data-theme="dark"] p {
+            color: #c0c0c0 !important;
+        }
+        
+        html[data-theme="dark"] .doc-content p {
+            color: #c0c0c0 !important;
+        }
+        
+        html[data-theme="dark"] ul li {
+            color: #c0c0c0 !important;
+        }
+        
+        html[data-theme="dark"] strong {
+            color: #f0f0f0 !important;
+        }
+        
+        html[data-theme="dark"] .button {
+            background: #007bff !important;
+            color: white !important;
+            border-color: #007bff !important;
+        }
+        
+        html[data-theme="dark"] .button:hover {
+            background: #0056b3 !important;
+        }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:snmp_jobs_snmpjob_changelist' %}">{% trans 'Tareas SNMP' %}</a>
+    &rsaquo; {% trans 'Documentación' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>📚 Documentación de Tareas SNMP</h1>
+
+<p class="intro-text" style="font-size:14px; margin:20px 0;">
+    Esta guía explica en detalle qué hace cada tipo de tarea SNMP, cómo funciona su flujo de ejecución, 
+    y qué datos se almacenan en la base de datos.
+</p>
+
+<!-- DISCOVERY -->
+<div class="doc-section discovery">
+    <h2><span class="badge discovery">DISCOVERY</span> Descubrimiento de ONUs</h2>
+    
+    <div class="doc-content">
+        <h3>🎯 ¿Qué hace?</h3>
+        <p>Descubre todas las ONUs conectadas a una OLT mediante SNMP WALK y actualiza su estado de presencia.</p>
+        
+        <h3>📋 Flujo de Ejecución</h3>
+        <div class="flow-diagram">
+1️⃣ <strong>discovery_main_task</strong> (cola: discovery_main o discovery_manual)<br>
+   ↓ Ejecuta SNMP WALK sobre el OID configurado<br>
+   ↓ Obtiene TODOS los índices SNMP encontrados<br>
+   ↓<br>
+2️⃣ <strong>Guarda resultados en memoria</strong><br>
+   ↓ Almacena temporalmente todos los índices detectados<br>
+   ↓<br>
+3️⃣ <strong>SOLO si la tarea es SUCCESS</strong>:<br>
+   ├─ Crea/actualiza registros en <span class="code">onu_index_map</span><br>
+   ├─ Actualiza <span class="code">onu_status</span>:<br>
+   │  ├─ Índices que APARECEN → <span class="code">presence = 'ENABLED'</span> 🟢<br>
+   │  └─ Índices que NO APARECEN → <span class="code">presence = 'DISABLED'</span> 🔴<br>
+   └─ Finaliza
+        </div>
+        
+        <h3>💾 Datos que actualiza</h3>
+        <ul>
+            <li><span class="code">onu_index_map</span>: Mapeo de índices SNMP (raw_index_key, normalized_id)</li>
+            <li><span class="code">onu_status</span>: Estado de presencia (ENABLED/DISABLED)</li>
+        </ul>
+        
+        <h3>⚙️ Configuración</h3>
+        <ul>
+            <li><strong>Reintentos:</strong> 2 reintentos cada 30 segundos</li>
+            <li><strong>Cola:</strong> <span class="code">discovery_main</span> (automática) o <span class="code">discovery_manual</span> (manual)</li>
+            <li><strong>OID requerido:</strong> Debe apuntar a tabla de descubrimiento (ej: .1.3.6.1.4.1.2011.6.128.1.1.2.46.1.1)</li>
+        </ul>
+        
+        <div class="info-box">
+            <strong>💡 Importante:</strong> Esta tarea NO desactiva OLTs por fallos consecutivos. Solo actualiza el estado de las ONUs.
+        </div>
+    </div>
+</div>
+
+<!-- GET -->
+<div class="doc-section get">
+    <h2><span class="badge get">GET</span> Consulta Individual SNMP</h2>
+    
+    <div class="doc-content">
+        <h3>🎯 ¿Qué hace?</h3>
+        <p>Consulta valores individuales de ONUs mediante SNMP GET y actualiza campos específicos en <span class="code">onu_inventory</span>.</p>
+        
+        <h3>📋 Flujo de Ejecución</h3>
+        <div class="flow-diagram">
+1️⃣ <strong>get_main_task</strong> (cola: get_main o get_manual)<br>
+   ↓ Consulta <span class="code">onu_status</span> filtrando <span class="code">presence = 'ENABLED'</span><br>
+   ↓ Divide ONUs en lotes (default: 200 ONUs por lote)<br>
+   ↓<br>
+2️⃣ <strong>get_poller_task</strong> (cola: get_poller) [PARALELO]<br>
+   ├─ Máximo 10 pollers simultáneos por OLT<br>
+   ├─ Máximo 5 consultas SNMP simultáneas por OLT (semáforo)<br>
+   ↓<br>
+3️⃣ Para cada ONU:<br>
+   ├─ Ejecuta SNMP GET individual: <span class="code">OID + raw_index_key</span><br>
+   ├─ Si respuesta = <strong>NOSUCHINSTANCE</strong>:<br>
+   │  ├─ <span class="code">onu_status.presence = 'DISABLED'</span> 🔴<br>
+   │  └─ <span class="code">onu_inventory.active = False</span><br>
+   ├─ Si respuesta = <strong>valor válido</strong>:<br>
+   │  └─ Actualiza campo en <span class="code">onu_inventory</span> según configuración OID<br>
+   └─ Si <strong>timeout/error</strong>:<br>
+      └─ Subdivisión progresiva: 200 → 50 → individual (2 reintentos)<br>
+        </div>
+        
+        <h3>💾 Datos que actualiza (según OID configurado)</h3>
+        <ul>
+            <li><span class="code">snmp_description</span>: Descripción SNMP de la ONU</li>
+            <li><span class="code">mac_address</span>: Dirección MAC (opción formatear: AC:DC:SD → ACDCSD)</li>
+            <li><span class="code">plan_onu</span>: Plan de servicio asignado</li>
+            <li><span class="code">distancia_onu</span>: Distancia física en km (convierte metros → km)</li>
+            <li><span class="code">modelo_onu</span>: Modelo del equipo ONU</li>
+        </ul>
+        
+        <h3>🔄 Lógica de "Mantener Valor Previo"</h3>
+        <p>Si el OID tiene <span class="code">keep_previous_value = True</span>:</p>
+        <ul>
+            <li>✅ <strong>Si GET devuelve valor nuevo</strong> → SOBREESCRIBE (actualiza)</li>
+            <li>✅ <strong>Si GET devuelve vacío</strong> → MANTIENE valor anterior (no pierde dato)</li>
+        </ul>
+        
+        <h3>⚙️ Configuración</h3>
+        <ul>
+            <li><strong>Lote inicial:</strong> 200 ONUs</li>
+            <li><strong>Subdivisión:</strong> 50 ONUs</li>
+            <li><strong>Reintentos individuales:</strong> 2 intentos con backoff exponencial</li>
+            <li><strong>Pollers por OLT:</strong> Máximo 10 simultáneos</li>
+            <li><strong>Semáforo SNMP:</strong> Máximo 5 consultas simultáneas por OLT</li>
+            <li><strong>Colas:</strong> <span class="code">get_main</span>, <span class="code">get_poller</span>, <span class="code">get_retry</span>, <span class="code">get_manual</span></li>
+        </ul>
+        
+        <div class="warning-box">
+            <strong>⚠️ Prerequisito:</strong> Ejecuta primero una tarea <strong>DISCOVERY</strong> para tener ONUs con <span class="code">presence='ENABLED'</span>. 
+            De lo contrario, GET no encontrará ONUs para consultar.
+        </div>
+    </div>
+</div>
+
+<!-- WALK -->
+<div class="doc-section walk">
+    <h2><span class="badge walk">WALK</span> SNMP Walk (Recorrido Completo)</h2>
+    
+    <div class="doc-content">
+        <h3>🎯 ¿Qué hace?</h3>
+        <p>Recorre completamente una rama del árbol MIB mediante SNMP WALK, obteniendo todos los valores bajo un OID base.</p>
+        
+        <h3>📋 Características</h3>
+        <ul>
+            <li>Obtiene <strong>múltiples valores</strong> en una sola operación</li>
+            <li>Recorre secuencialmente la tabla SNMP</li>
+            <li>Útil para descubrir estructura completa de datos</li>
+        </ul>
+        
+        <div class="info-box">
+            <strong>💡 Diferencia con DISCOVERY:</strong> WALK es genérico (cualquier OID), mientras que DISCOVERY tiene lógica específica 
+            para actualizar <span class="code">onu_index_map</span> y <span class="code">onu_status</span>.
+        </div>
+    </div>
+</div>
+
+<!-- BULK -->
+<div class="doc-section bulk">
+    <h2><span class="badge bulk">BULK</span> SNMP GetBulk (Consulta Masiva)</h2>
+    
+    <div class="doc-content">
+        <h3>🎯 ¿Qué hace?</h3>
+        <p>Obtiene múltiples valores en una sola petición SNMP de forma más eficiente que WALK.</p>
+        
+        <h3>📋 Características</h3>
+        <ul>
+            <li><strong>Más rápido</strong> que WALK para tablas grandes</li>
+            <li>Reduce el número de peticiones SNMP</li>
+            <li>Obtiene bloques de valores (ej: 10-50 valores por petición)</li>
+            <li>Ideal para equipos con muchos puertos/ONUs</li>
+        </ul>
+        
+        <div class="info-box">
+            <strong>💡 Cuándo usar BULK:</strong> Para consultar tablas grandes (>100 entradas) donde WALK sería muy lento.
+        </div>
+    </div>
+</div>
+
+<!-- TABLE -->
+<div class="doc-section table">
+    <h2><span class="badge table">TABLE</span> SNMP Table (Tabla Completa)</h2>
+    
+    <div class="doc-content">
+        <h3>🎯 ¿Qué hace?</h3>
+        <p>Obtiene una tabla SNMP completa con múltiples columnas de forma estructurada.</p>
+        
+        <h3>📋 Características</h3>
+        <ul>
+            <li>Obtiene <strong>múltiples columnas</strong> de una tabla</li>
+            <li>Estructura los datos en formato tabla</li>
+            <li>Útil para obtener información relacionada de múltiples OIDs</li>
+            <li>Ejemplo: tabla de interfaces con nombre, estado, velocidad, errores</li>
+        </ul>
+    </div>
+</div>
+
+<!-- COMPARACIÓN -->
+<div class="doc-section" style="border-left-color: #6c757d;">
+    <h2>⚖️ Comparación de Tipos</h2>
+    
+    <table style="width:100%; border-collapse: collapse; margin-top:15px;">
+        <thead>
+            <tr style="background:#f8f9fa;">
+                <th style="padding:10px; border:1px solid #dee2e6;">Tipo</th>
+                <th style="padding:10px; border:1px solid #dee2e6;">Consulta</th>
+                <th style="padding:10px; border:1px solid #dee2e6;">Velocidad</th>
+                <th style="padding:10px; border:1px solid #dee2e6;">Uso Recomendado</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td style="padding:10px; border:1px solid #dee2e6;"><span class="badge discovery">DISCOVERY</span></td>
+                <td style="padding:10px; border:1px solid #dee2e6;">WALK + lógica específica</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">⚡ Media</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Descubrir ONUs y actualizar estado</td>
+            </tr>
+            <tr>
+                <td style="padding:10px; border:1px solid #dee2e6;"><span class="badge get">GET</span></td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Individual por ONU</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">🐢 Lenta (muchas peticiones)</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Valores específicos (descripción, MAC, plan)</td>
+            </tr>
+            <tr>
+                <td style="padding:10px; border:1px solid #dee2e6;"><span class="badge walk">WALK</span></td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Secuencial completa</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">⚡ Media</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Explorar estructura MIB</td>
+            </tr>
+            <tr>
+                <td style="padding:10px; border:1px solid #dee2e6;"><span class="badge bulk">BULK</span></td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Bloques grandes</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">⚡⚡ Rápida</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Tablas grandes (>100 entradas)</td>
+            </tr>
+            <tr>
+                <td style="padding:10px; border:1px solid #dee2e6;"><span class="badge table">TABLE</span></td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Múltiples columnas</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">⚡ Media-Rápida</td>
+                <td style="padding:10px; border:1px solid #dee2e6;">Datos relacionados (interfaz completa)</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- WORKFLOW RECOMENDADO -->
+<div class="doc-section" style="border-left-color: #17a2b8;">
+    <h2>🔄 Workflow Recomendado</h2>
+    
+    <div class="flow-diagram">
+<strong>Paso 1: DISCOVERY</strong> (ejecutar primero)<br>
+   ↓ Descubre todas las ONUs conectadas<br>
+   ↓ Actualiza onu_status.presence (ENABLED/DISABLED)<br>
+   ↓<br>
+<strong>Paso 2: GET</strong> (después de DISCOVERY)<br>
+   ↓ Consulta solo ONUs con presence='ENABLED'<br>
+   ↓ Actualiza descripción, MAC, plan, distancia, modelo<br>
+   ↓<br>
+<strong>Paso 3: BULK/TABLE</strong> (opcional, para datos masivos)<br>
+   └─ Obtiene información adicional de forma eficiente
+    </div>
+    
+    <div class="warning-box">
+        <strong>⚠️ Orden importante:</strong> Siempre ejecuta <strong>DISCOVERY primero</strong> para tener el inventario de ONUs actualizado. 
+        Las tareas GET dependen de los datos de DISCOVERY para saber qué ONUs consultar.
+    </div>
+</div>
+
+<div style="margin-top:30px; text-align:center;">
+    <a href="{% url 'admin:snmp_jobs_snmpjob_changelist' %}" class="button" style="padding:10px 20px;">← Volver a Tareas SNMP</a>
+</div>
+
+{% endblock %}
+

@@ -1,0 +1,237 @@
+{% extends "admin/index.html" %}
+{% load i18n static admin_urls %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* Tema oscuro para el admin */
+    :root {
+        --primary-color: #007cba;
+        --primary-hover: #005a87;
+        --background-light: #f8f9fa;
+        --background-dark: #1a1a1a;
+        --text-dark: #333;
+        --text-light: #fff;
+        --border-color: #ddd;
+        --border-dark: #444;
+    }
+
+    /* Toggle para tema oscuro */
+    .theme-toggle {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+        background: var(--primary-color);
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 25px;
+        cursor: pointer;
+        font-size: 14px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+    }
+
+    .theme-toggle:hover {
+        background: var(--primary-hover);
+        transform: translateY(-2px);
+    }
+
+    /* Estilos del dashboard de configuración */
+    .config-dashboard-card {
+        margin: 20px 0;
+        padding: 20px;
+        background: var(--background-light);
+        border-radius: 12px;
+        border-left: 5px solid var(--primary-color);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+
+    .config-dashboard-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+
+    .config-dashboard-card h3 {
+        margin: 0 0 10px 0;
+        color: var(--primary-color);
+        font-size: 1.4em;
+        font-weight: 600;
+    }
+
+    .config-dashboard-card p {
+        margin: 0 0 15px 0;
+        color: #666;
+        line-height: 1.5;
+    }
+
+    .config-dashboard-link {
+        display: inline-block;
+        text-decoration: none;
+        padding: 12px 24px;
+        background: var(--primary-color);
+        color: white;
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .config-dashboard-link:hover {
+        background: var(--primary-hover);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        color: white;
+        text-decoration: none;
+    }
+
+    /* Tema oscuro */
+    [data-theme="dark"] {
+        --background-light: #2d2d2d;
+        --text-dark: #e0e0e0;
+        --border-color: #444;
+    }
+
+    [data-theme="dark"] body {
+        background-color: #1a1a1a;
+        color: var(--text-light);
+    }
+
+    [data-theme="dark"] .config-dashboard-card {
+        background: var(--background-light);
+        border-color: #007cba;
+    }
+
+    [data-theme="dark"] .config-dashboard-card h3 {
+        color: #4fc3f7;
+    }
+
+    [data-theme="dark"] .config-dashboard-card p {
+        color: #b0b0b0;
+    }
+
+    [data-theme="dark"] #header {
+        background: #2d2d2d;
+        border-bottom: 1px solid var(--border-dark);
+    }
+
+    [data-theme="dark"] #content {
+        background: #1a1a1a;
+    }
+
+    [data-theme="dark"] .module {
+        background: #2d2d2d;
+        border: 1px solid var(--border-dark);
+    }
+
+    [data-theme="dark"] .module h2 {
+        background: #3d3d3d;
+        color: var(--text-light);
+        border-bottom: 1px solid var(--border-dark);
+    }
+
+    [data-theme="dark"] .module table {
+        background: #2d2d2d;
+    }
+
+    [data-theme="dark"] .module th {
+        background: #3d3d3d;
+        color: var(--text-light);
+    }
+
+    [data-theme="dark"] .module td {
+        color: var(--text-light);
+        border-bottom: 1px solid var(--border-dark);
+    }
+
+    [data-theme="dark"] .module a {
+        color: #4fc3f7;
+    }
+
+    [data-theme="dark"] .module a:hover {
+        color: #81d4fa;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .theme-toggle {
+            top: 10px;
+            right: 10px;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        
+        .config-dashboard-card {
+            margin: 15px 0;
+            padding: 15px;
+        }
+        
+        .config-dashboard-link {
+            padding: 10px 20px;
+            font-size: 14px;
+        }
+    }
+</style>
+
+<script>
+    // Toggle de tema oscuro
+    function toggleTheme() {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('admin-theme', newTheme);
+        
+        // Actualizar texto del botón
+        const button = document.querySelector('.theme-toggle');
+        button.textContent = newTheme === 'dark' ? '🌙 Tema Oscuro' : '☀️ Tema Claro';
+    }
+
+    // Cargar tema guardado
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedTheme = localStorage.getItem('admin-theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        
+        const button = document.querySelector('.theme-toggle');
+        button.textContent = savedTheme === 'dark' ? '🌙 Tema Oscuro' : '☀️ Tema Claro';
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+{{ block.super }}
+
+<!-- Dashboard de Configuración Avanzada -->
+<div class="config-dashboard-card">
+    <h3>🔧 Configuración Avanzada del Sistema</h3>
+    <p>
+        Gestiona configuraciones del sistema, SNMP y Celery de forma centralizada. 
+        Ajusta timeouts, reintentos, intervalos y otros parámetros críticos del sistema.
+    </p>
+    <a href="{% url 'configuracion_avanzada:dashboard' %}" class="config-dashboard-link">
+        📊 Ir al Dashboard de Configuración
+    </a>
+</div>
+
+<!-- Enlaces rápidos adicionales -->
+<div class="config-dashboard-card">
+    <h3>⚡ Accesos Rápidos</h3>
+    <p>Enlaces directos a configuraciones específicas:</p>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px;">
+        <a href="{% url 'configuracion_avanzada:snmp_dashboard' %}" class="config-dashboard-link" style="background: #28a745;">
+            🌐 Configuración SNMP
+        </a>
+        <a href="{% url 'configuracion_avanzada:celery_dashboard' %}" class="config-dashboard-link" style="background: #ffc107; color: #333;">
+            ⚡ Configuración Celery
+        </a>
+        <a href="{% url 'admin:configuracion_avanzada_configuracionsistema_changelist' %}" class="config-dashboard-link" style="background: #6f42c1;">
+            ⚙️ Todas las Configuraciones
+        </a>
+    </div>
+</div>
+
+<!-- Botón de toggle de tema -->
+<button class="theme-toggle" onclick="toggleTheme()">☀️ Tema Claro</button>
+{% endblock %}

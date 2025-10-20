@@ -1,0 +1,113 @@
+{% extends "admin/change_form.html" %}
+{% load static %}
+
+{% block submit_buttons_bottom %}
+    {{ block.super }}
+    <div class="submit-row">
+        <input type="button" value="Programar Tarea Ahora" id="programar-tarea-btn">
+    </div>
+{% endblock %}
+
+{% block extrahead %}
+    {{ block.super }}
+    <style>
+        #execution-status {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            display: none;
+        }
+        .status-pending { background-color: #fff3cd; }
+        .status-running { background-color: #cce5ff; }
+        .status-success { background-color: #d4edda; }
+        .status-failed { background-color: #f8d7da; }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('programar-tarea-btn');
+            if (!btn) return;
+
+            const statusDiv = document.createElement('div');
+            statusDiv.id = 'execution-status';
+            btn.parentNode.insertBefore(statusDiv, btn.nextSibling);
+
+            btn.addEventListener('click', async function() {
+                try {
+                    const jobId = window.location.pathname.split('/')[4];
+                    const response = await fetch(`programar-tarea/`, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = `<p>${data.message}</p>`;
+                    
+                    // Iniciar polling para cada ejecución
+                    data.execution_ids.forEach(executionId => {
+                        pollExecutionStatus(executionId);
+                    });
+
+                } catch (error) {
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+                    statusDiv.className = 'status-failed';
+                }
+            });
+
+            async function pollExecutionStatus(executionId) {
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const response = await fetch(`/admin/snmp_jobs/execution/status/${executionId}/`);
+                        const data = await response.json();
+                        
+                        if (data.error) {
+                            throw new Error(data.error);
+                        }
+
+                        updateExecutionStatus(executionId, data);
+                        
+                        if (data.status === 'SUCCESS' || data.status === 'FAILED') {
+                            clearInterval(pollInterval);
+                        }
+                        
+                    } catch (error) {
+                        console.error('Error polling status:', error);
+                        clearInterval(pollInterval);
+                    }
+                }, 2000);
+            }
+
+            function updateExecutionStatus(executionId, data) {
+                const statusEl = document.getElementById(`execution-${executionId}`) || 
+                               document.createElement('div');
+                
+                statusEl.id = `execution-${executionId}`;
+                statusEl.className = `status-${data.status.toLowerCase()}`;
+                
+                let content = `<h4>Ejecución #${executionId}</h4>`;
+                content += `<p>Estado: ${data.status}</p>`;
+                
+                if (data.error_message) {
+                    content += `<p>Error: ${data.error_message}</p>`;
+                }
+                
+                if (data.result_summary) {
+                    content += `<pre>${JSON.stringify(data.result_summary, null, 2)}</pre>`;
+                }
+                
+                statusEl.innerHTML = content;
+                
+                if (!statusEl.parentNode) {
+                    statusDiv.appendChild(statusEl);
+                }
+            }
+        });
+    </script>
+{% endblock %}

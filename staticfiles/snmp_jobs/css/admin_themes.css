@@ -1,0 +1,459 @@
+/* Estilos para tema claro y oscuro del formulario SNMP */
+
+/* ===== TEMA CLARO ===== */
+@media (prefers-color-scheme: light) {
+    /* Fondo del formulario */
+    #content-main {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+    }
+    
+    .form-row {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border-color: #cccccc !important;
+    }
+    
+    .form-row input[type="text"],
+    .form-row input[type="number"],
+    .form-row textarea,
+    .form-row select {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border-color: #cccccc !important;
+    }
+    
+    .form-row label {
+        color: #333333 !important;
+    }
+    
+    .help {
+        color: #666666 !important;
+    }
+}
+
+/* ===== TEMA OSCURO - DATA-THEME ===== */
+html[data-theme="dark"] #content-main {
+    background-color: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .form-row {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+html[data-theme="dark"] .form-row input[type="text"],
+html[data-theme="dark"] .form-row input[type="number"],
+html[data-theme="dark"] .form-row textarea,
+html[data-theme="dark"] .form-row select {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+/* Corregir franja blanca horizontal en tema oscuro */
+html[data-theme="dark"] .breadcrumbs,
+html[data-theme="dark"] .breadcrumb,
+html[data-theme="dark"] .breadcrumbs a,
+html[data-theme="dark"] .breadcrumb a {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] h1,
+html[data-theme="dark"] .content-title,
+html[data-theme="dark"] .content h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .content {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .content-main {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .content-main .form-row {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+/* Estilos adicionales para corregir franja blanca */
+html[data-theme="dark"] body {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] #content {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .content-wrapper {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .content-wrapper .content {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .content-wrapper .content h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .content-wrapper .breadcrumbs {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .content-wrapper .breadcrumbs a {
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .content-wrapper .breadcrumbs a:hover {
+    color: #4a9eff !important;
+}
+
+/* Estilos más agresivos para eliminar fondo blanco en tema oscuro */
+html[data-theme="dark"] body,
+html[data-theme="dark"] html,
+html[data-theme="dark"] #container,
+html[data-theme="dark"] #content,
+html[data-theme="dark"] .content,
+html[data-theme="dark"] .content-wrapper,
+html[data-theme="dark"] .content-main {
+    background-color: #1a1a1a !important;
+}
+
+html[data-theme="dark"] .breadcrumbs,
+html[data-theme="dark"] .breadcrumb,
+html[data-theme="dark"] .content h1,
+html[data-theme="dark"] .content-title,
+html[data-theme="dark"] h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .breadcrumbs a,
+html[data-theme="dark"] .breadcrumb a {
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .breadcrumbs a:hover,
+html[data-theme="dark"] .breadcrumb a:hover {
+    color: #4a9eff !important;
+}
+
+/* Forzar todos los elementos a tema oscuro */
+html[data-theme="dark"] div,
+html[data-theme="dark"] section,
+html[data-theme="dark"] article,
+html[data-theme="dark"] header,
+html[data-theme="dark"] main {
+    background-color: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .form-row,
+html[data-theme="dark"] .form-row div {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .form-row input[type="text"]:focus,
+html[data-theme="dark"] .form-row input[type="number"]:focus,
+html[data-theme="dark"] .form-row textarea:focus,
+html[data-theme="dark"] .form-row select:focus {
+    border-color: #4a9eff !important;
+    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2) !important;
+}
+
+html[data-theme="dark"] .form-row label {
+    color: #e0e0e0 !important;
+}
+
+html[data-theme="dark"] .help {
+    color: #b0b0b0 !important;
+}
+
+html[data-theme="dark"] .field-oid_espacio_info input[readonly] {
+    background-color: #333333 !important;
+    color: #b0b0b0 !important;
+}
+
+/* ===== TEMA OSCURO - CLASE DARK-THEME ===== */
+.dark-theme #content-main {
+    background-color: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .form-row {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+.dark-theme .form-row input[type="text"],
+.dark-theme .form-row input[type="number"],
+.dark-theme .form-row textarea,
+.dark-theme .form-row select {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+/* Corregir franja blanca horizontal en tema oscuro - clase dark-theme */
+.dark-theme .breadcrumbs,
+.dark-theme .breadcrumb,
+.dark-theme .breadcrumbs a,
+.dark-theme .breadcrumb a {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme h1,
+.dark-theme .content-title,
+.dark-theme .content h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .content {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme .content-main {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme body {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme #content {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme .content-wrapper {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme .content-wrapper .content {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme .content-wrapper .content h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .content-wrapper .breadcrumbs {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .content-wrapper .breadcrumbs a {
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .content-wrapper .breadcrumbs a:hover {
+    color: #4a9eff !important;
+}
+
+/* Estilos más agresivos para eliminar fondo blanco en tema oscuro - clase dark-theme */
+.dark-theme body,
+.dark-theme html,
+.dark-theme #container,
+.dark-theme #content,
+.dark-theme .content,
+.dark-theme .content-wrapper,
+.dark-theme .content-main {
+    background-color: #1a1a1a !important;
+}
+
+.dark-theme .breadcrumbs,
+.dark-theme .breadcrumb,
+.dark-theme .content h1,
+.dark-theme .content-title,
+.dark-theme h1 {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .breadcrumbs a,
+.dark-theme .breadcrumb a {
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .breadcrumbs a:hover,
+.dark-theme .breadcrumb a:hover {
+    color: #4a9eff !important;
+}
+
+/* Forzar todos los elementos a tema oscuro - clase dark-theme */
+.dark-theme div,
+.dark-theme section,
+.dark-theme article,
+.dark-theme header,
+.dark-theme main {
+    background-color: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .form-row,
+.dark-theme .form-row div {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+}
+
+/* Estilos de depuración removidos para evitar problemas de rendimiento */
+
+.dark-theme .form-row input[type="text"]:focus,
+.dark-theme .form-row input[type="number"]:focus,
+.dark-theme .form-row textarea:focus,
+.dark-theme .form-row select:focus {
+    border-color: #4a9eff !important;
+    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2) !important;
+}
+
+.dark-theme .form-row label {
+    color: #e0e0e0 !important;
+}
+
+.dark-theme .help {
+    color: #b0b0b0 !important;
+}
+
+.dark-theme .field-oid_espacio_info input[readonly] {
+    background-color: #333333 !important;
+    color: #b0b0b0 !important;
+}
+
+/* ===== SELECTORES Y ELEMENTOS ESPECIALES ===== */
+/* Tema claro */
+@media (prefers-color-scheme: light) {
+    .selector-available select,
+    .selector-chosen select {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border-color: #cccccc !important;
+    }
+    
+    .selector-filter {
+        background: #ffffff !important;
+        border-color: #cccccc !important;
+    }
+    
+    .selector-filter input {
+        background: #ffffff !important;
+        color: #333333 !important;
+        border-color: #cccccc !important;
+    }
+    
+    .oid-search-results {
+        background: #ffffff !important;
+        border-color: #cccccc !important;
+    }
+    
+    .oid-search-item {
+        color: #333333 !important;
+        border-bottom-color: #cccccc !important;
+    }
+    
+    .oid-search-item:hover {
+        background-color: #f5f5f5 !important;
+    }
+}
+
+/* Tema oscuro - data-theme */
+html[data-theme="dark"] .selector-available select,
+html[data-theme="dark"] .selector-chosen select {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+html[data-theme="dark"] .selector-filter {
+    background: #1e1e1e !important;
+    border-color: #404040 !important;
+}
+
+html[data-theme="dark"] .selector-filter input {
+    background: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+html[data-theme="dark"] .oid-search-results {
+    background: #1e1e1e !important;
+    border-color: #404040 !important;
+}
+
+html[data-theme="dark"] .oid-search-item {
+    color: #e0e0e0 !important;
+    border-bottom-color: #404040 !important;
+}
+
+html[data-theme="dark"] .oid-search-item:hover {
+    background-color: #2d2d2d !important;
+}
+
+/* Tema oscuro - clase dark-theme */
+.dark-theme .selector-available select,
+.dark-theme .selector-chosen select {
+    background-color: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+.dark-theme .selector-filter {
+    background: #1e1e1e !important;
+    border-color: #404040 !important;
+}
+
+.dark-theme .selector-filter input {
+    background: #1e1e1e !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+
+.dark-theme .oid-search-results {
+    background: #1e1e1e !important;
+    border-color: #404040 !important;
+}
+
+.dark-theme .oid-search-item {
+    color: #e0e0e0 !important;
+    border-bottom-color: #404040 !important;
+}
+
+.dark-theme .oid-search-item:hover {
+    background-color: #2d2d2d !important;
+}
+
+/* ===== ESTILOS DE DEPURACIÓN ===== */
+html[data-theme="dark"] .form-row {
+    border: 2px solid #ff0000 !important; /* Borde rojo para depuración */
+}
+
+html[data-theme="dark"] .form-row input[type="text"],
+html[data-theme="dark"] .form-row input[type="number"],
+html[data-theme="dark"] .form-row textarea,
+html[data-theme="dark"] .form-row select {
+    border: 2px solid #00ff00 !important; /* Borde verde para depuración */
+}
+
+.dark-theme .form-row {
+    border: 2px solid #ff0000 !important; /* Borde rojo para depuración */
+}
+
+.dark-theme .form-row input[type="text"],
+.dark-theme .form-row input[type="number"],
+.dark-theme .form-row textarea,
+.dark-theme .form-row select {
+    border: 2px solid #00ff00 !important; /* Borde verde para depuración */
+}

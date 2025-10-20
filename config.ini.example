@@ -1,0 +1,41 @@
+# ============================================
+# CONFIGURACIÓN FACHO DELUXE V2
+# ============================================
+# 
+# IMPORTANTE: 
+# - Copiar este archivo como config.ini
+# - Completar con tus valores reales
+# - config.ini NO se sube al repositorio (.gitignore)
+#
+# Comando: cp config.ini.example config.ini
+#
+
+[database]
+# Nombre de la base de datos PostgreSQL
+name = fiberprodata
+
+# Usuario de la base de datos
+user = fiberproadmin
+
+# Contraseña del usuario (CAMBIAR POR TU CONTRASEÑA REAL)
+password = TU_CONTRASEÑA_SEGURA_AQUI
+
+# Host donde corre PostgreSQL
+host = localhost
+
+# Puerto de PostgreSQL (por defecto: 5432)
+port = 5432
+
+
+[deployment]
+# IP donde se desplegará la aplicación
+# Usar 0.0.0.0 para escuchar en todas las interfaces
+# o una IP específica como 192.168.1.100
+bind_ip = 0.0.0.0
+
+# Puerto donde correrá Gunicorn (por defecto: 8000)
+bind_port = 8000
+
+# Puerto de Supervisor (por defecto: 9001)
+supervisor_port = 9001
+
