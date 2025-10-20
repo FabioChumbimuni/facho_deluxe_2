@@ -1,0 +1,153 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        /* ===== ESTILOS PARA VISTA PREVIA DE FÓRMULAS ===== */
+        
+        /* TEMA CLARO - Vista previa de fórmulas */
+        .formula-preview {
+            padding: 15px;
+            font-family: monospace;
+            border-radius: 4px;
+            margin: 10px 0;
+            background-color: #ffffff !important;
+            color: #333333 !important;
+        }
+        
+        .formula-linear {
+            background-color: #ffffff !important;
+            border-left: 4px solid #17a2b8 !important;
+            color: #333333 !important;
+        }
+        
+        .formula-bitshift {
+            background-color: #ffffff !important;
+            border-left: 4px solid #6f42c1 !important;
+            color: #333333 !important;
+        }
+        
+        .formula-title {
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .formula-linear .formula-title {
+            color: #17a2b8 !important;
+        }
+        
+        .formula-bitshift .formula-title {
+            color: #6f42c1 !important;
+        }
+        
+        .formula-warning {
+            background-color: #fff3cd !important;
+            padding: 10px;
+            margin-top: 10px;
+            border-left: 4px solid #ffc107 !important;
+            border-radius: 4px;
+            color: #333333 !important;
+        }
+        
+        .warning-title {
+            color: #856404 !important;
+        }
+        
+        /* TEMA CLARO ESPECÍFICO */
+        html[data-theme="light"] .formula-preview {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+        }
+        
+        html[data-theme="light"] .formula-linear {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+        }
+        
+        html[data-theme="light"] .formula-bitshift {
+            background-color: #ffffff !important;
+            color: #333333 !important;
+        }
+        
+        html[data-theme="light"] .formula-warning {
+            background-color: #fff3cd !important;
+            color: #333333 !important;
+        }
+        
+        /* TEMA OSCURO - Vista previa de fórmulas */
+        html[data-theme="dark"] .formula-preview,
+        .dark-theme .formula-preview {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+        }
+        
+        html[data-theme="dark"] .formula-linear,
+        .dark-theme .formula-linear {
+            background-color: #2d2d2d !important;
+            border-left: 4px solid #17a2b8 !important;
+        }
+        
+        html[data-theme="dark"] .formula-bitshift,
+        .dark-theme .formula-bitshift {
+            background-color: #2d2d2d !important;
+            border-left: 4px solid #6f42c1 !important;
+        }
+        
+        html[data-theme="dark"] .formula-linear .formula-title,
+        .dark-theme .formula-linear .formula-title {
+            color: #17a2b8 !important;
+        }
+        
+        html[data-theme="dark"] .formula-bitshift .formula-title,
+        .dark-theme .formula-bitshift .formula-title {
+            color: #6f42c1 !important;
+        }
+        
+        html[data-theme="dark"] .formula-warning,
+        .dark-theme .formula-warning {
+            background-color: #3d2f00 !important;
+            border-left: 4px solid #ffc107 !important;
+        }
+        
+        html[data-theme="dark"] .warning-title,
+        .dark-theme .warning-title {
+            color: #ffc107 !important;
+        }
+        
+        /* Media query para tema oscuro */
+        @media (prefers-color-scheme: dark) {
+            .formula-preview {
+                background-color: #2d2d2d !important;
+                color: #e0e0e0 !important;
+            }
+            
+            .formula-linear {
+                background-color: #2d2d2d !important;
+                border-left: 4px solid #17a2b8 !important;
+            }
+            
+            .formula-bitshift {
+                background-color: #2d2d2d !important;
+                border-left: 4px solid #6f42c1 !important;
+            }
+            
+            .formula-linear .formula-title {
+                color: #17a2b8 !important;
+            }
+            
+            .formula-bitshift .formula-title {
+                color: #6f42c1 !important;
+            }
+            
+            .formula-warning {
+                background-color: #3d2f00 !important;
+                border-left: 4px solid #ffc107 !important;
+            }
+            
+            .warning-title {
+                color: #ffc107 !important;
+            }
+        }
+    </style>
+{% endblock %}

@@ -939,7 +939,7 @@ class ODFHilosAdmin(admin.ModelAdmin):
             return format_html(info_html)
         else:
             return ""  # No mostrar nada cuando no hay puerto seleccionado
-    zabbix_port_info.short_description = ""
+    zabbix_port_info.short_description = "Información del Puerto Zabbix"
 
     # Acciones personalizadas
     actions = ['habilitar_hilos', 'deshabilitar_hilos', 'exportar_configuracion']

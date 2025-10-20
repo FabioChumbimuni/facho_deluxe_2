@@ -9,6 +9,8 @@ from .models import IndexFormula
 class IndexFormulaAdmin(admin.ModelAdmin):
     """Admin para fórmulas de cálculo de índices SNMP"""
     
+    change_form_template = 'admin/snmp_formulas/change_form.html'
+    
     list_display = (
         'nombre', 
         'get_marca_display', 
@@ -172,8 +174,8 @@ class IndexFormulaAdmin(admin.ModelAdmin):
         """Muestra una vista previa de la fórmula configurada"""
         if obj.calculation_mode == 'linear':
             formula = f"""
-            <div style="background:#f8f9fa;padding:15px;border-left:4px solid #17a2b8;font-family:monospace;">
-                <strong style="color:#17a2b8;">📐 FÓRMULA LINEAL</strong><br><br>
+            <div class="formula-preview formula-linear">
+                <strong class="formula-title">📐 FÓRMULA LINEAL</strong><br><br>
                 <code>delta = SNMP_INDEX - {obj.base_index:,}</code><br>
                 <code>slot = delta ÷ {obj.step_slot:,}</code><br>
                 <code>resto = delta % {obj.step_slot:,}</code><br>
@@ -186,8 +188,8 @@ class IndexFormulaAdmin(admin.ModelAdmin):
             """
         else:
             formula = f"""
-            <div style="background:#f8f9fa;padding:15px;border-left:4px solid #6f42c1;font-family:monospace;">
-                <strong style="color:#6f42c1;">🔢 FÓRMULA BITSHIFT</strong><br><br>
+            <div class="formula-preview formula-bitshift">
+                <strong class="formula-title">🔢 FÓRMULA BITSHIFT</strong><br><br>
                 <code>slot = (SNMP_INDEX >> {obj.shift_slot_bits})</code>
                 {f" & {obj.mask_slot}" if obj.mask_slot else ""}<br>
                 <code>port = (SNMP_INDEX >> {obj.shift_port_bits})</code>
@@ -198,8 +200,8 @@ class IndexFormulaAdmin(admin.ModelAdmin):
         
         if obj.has_dot_notation:
             formula += """
-            <div style="background:#fff3cd;padding:10px;margin-top:10px;border-left:4px solid #ffc107;">
-                <strong style="color:#856404;">⚠️ NOTACIÓN CON PUNTO</strong><br>
+            <div class="formula-warning">
+                <strong class="warning-title">⚠️ NOTACIÓN CON PUNTO</strong><br>
                 El índice incluye ".ONU" al final (ej: "4194312448.2")
             </div>
             """
