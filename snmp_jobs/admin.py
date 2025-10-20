@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib.admin import helpers as admin_helpers
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.utils.translation import gettext_lazy as _
@@ -511,7 +512,11 @@ class SnmpJobAdmin(admin.ModelAdmin):
     mostrar_estadisticas_tareas.short_description = _('Mostrar estadísticas de tareas')
 
     def ejecutar_tareas_seleccionadas(self, request, queryset):
-        """Acción para ejecutar manualmente las tareas SNMP seleccionadas (MÁXIMA PRIORIDAD)"""
+        """Acción para ejecutar manualmente las tareas SNMP seleccionadas (MÁXIMA PRIORIDAD)
+        
+        Permite ejecutar tareas inactivas MANUALMENTE, pero SOLO con OLTs habilitadas.
+        Las OLTs deshabilitadas NUNCA se ejecutarán.
+        """
         from executions.models import Execution
         from .tasks import discovery_manual_task
         from snmp_get.tasks import get_manual_task
@@ -520,35 +525,46 @@ class SnmpJobAdmin(admin.ModelAdmin):
         
         logger = logging.getLogger(__name__)
         
-        # Filtrar solo tareas habilitadas
-        tareas_habilitadas = queryset.filter(enabled=True)
+        # CAMBIO: Ya NO filtrar por enabled=True - permitir ejecutar tareas inactivas MANUALMENTE
+        # La restricción de OLTs habilitadas se mantiene más abajo
+        tareas_seleccionadas = queryset
         
         # Si no se ha confirmado, mostrar ventana modal con resumen simple
         if request.POST.get('post') != 'yes':
+            # Separar tareas activas e inactivas para el modal
+            tareas_activas = tareas_seleccionadas.filter(enabled=True)
+            tareas_inactivas = tareas_seleccionadas.filter(enabled=False)
+            
             context = {
                 **self.admin_site.each_context(request),
                 'title': 'Confirmar Ejecución Manual de Tareas SNMP',
-                'queryset': tareas_habilitadas,
-                'total_tareas': tareas_habilitadas.count(),
-                'action_checkbox_name': admin.helpers.ACTION_CHECKBOX_NAME,
+                'queryset': tareas_seleccionadas,
+                'total_tareas': tareas_seleccionadas.count(),
+                'tareas_activas': tareas_activas,
+                'tareas_inactivas': tareas_inactivas,
+                'action_checkbox_name': admin_helpers.ACTION_CHECKBOX_NAME,
             }
             
             return render(request, 'admin/snmp_jobs/confirmar_ejecucion_manual.html', context)
         
         # Código original de ejecución
         
-        if not tareas_habilitadas.exists():
+        if not tareas_seleccionadas.exists():
             self.message_user(
                 request,
-                '⚠️ No hay tareas habilitadas seleccionadas para ejecutar.',
+                '⚠️ No hay tareas seleccionadas para ejecutar.',
                 messages.WARNING
             )
             return
         
         total_ejecuciones_creadas = 0
         total_tareas_procesadas = 0
+        tareas_inactivas_ejecutadas = 0
         
-        for tarea in tareas_habilitadas:
+        for tarea in tareas_seleccionadas:
+            # Contar tareas inactivas que se están ejecutando manualmente
+            if not tarea.enabled:
+                tareas_inactivas_ejecutadas += 1
             # Obtener job_hosts habilitados para esta tarea
             job_hosts = tarea.job_hosts.filter(enabled=True)
             
@@ -606,9 +622,24 @@ class SnmpJobAdmin(admin.ModelAdmin):
                 f'🚀 Ejecutadas {total_tareas_procesadas} tareas: {total_ejecuciones_creadas} ejecuciones creadas y encoladas con MÁXIMA PRIORIDAD.',
                 messages.SUCCESS
             )
+            
+            # Mensaje especial si se ejecutaron tareas inactivas
+            if tareas_inactivas_ejecutadas > 0:
+                self.message_user(
+                    request,
+                    f'⚠️ NOTA: Se ejecutaron {tareas_inactivas_ejecutadas} tarea(s) INACTIVA(S) manualmente. Solo se procesaron OLTs habilitadas.',
+                    messages.WARNING
+                )
+            
             self.message_user(
                 request,
                 f'📊 Las ejecuciones aparecerán en "Ejecuciones" y se procesarán inmediatamente en la cola discovery_manual.',
+                messages.INFO
+            )
+            
+            self.message_user(
+                request,
+                f'✅ Solo se ejecutaron en OLTs HABILITADAS. OLTs deshabilitadas fueron ignoradas.',
                 messages.INFO
             )
         else:

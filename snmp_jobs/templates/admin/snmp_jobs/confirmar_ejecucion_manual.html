@@ -72,6 +72,36 @@
             color: #007bff;
             transition: color 0.3s;
         }
+        .warning-box {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        .warning-box.inactive {
+            background: #f8d7da;
+            border-color: #dc3545;
+        }
+        .inactive-badge {
+            background: #dc3545;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+        .active-badge {
+            background: #28a745;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
         
         /* TEMA OSCURO - Sincronizado con Django Admin */
         html[data-theme="dark"] body,
@@ -139,6 +169,53 @@
             background: #6c757d !important;
             color: white !important;
         }
+        
+        html[data-theme="dark"] .warning-box {
+            background: #3d3000;
+            border-color: #ffc107;
+        }
+        
+        html[data-theme="dark"] .warning-box.inactive {
+            background: #3d0000;
+            border-color: #dc3545;
+        }
+        
+        /* Estilos para lista de OLTs */
+        .olt-list {
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            background: #f8f9fa;
+        }
+        
+        html[data-theme="dark"] .olt-list {
+            background: #2d2d2d;
+            border-color: #555;
+        }
+        
+        .olt-item {
+            padding: 2px 0;
+            font-size: 11px;
+        }
+        
+        .olt-enabled {
+            color: #28a745;
+        }
+        
+        .olt-disabled {
+            color: #dc3545;
+        }
+        
+        html[data-theme="dark"] .olt-enabled {
+            color: #5cb85c;
+        }
+        
+        html[data-theme="dark"] .olt-disabled {
+            color: #d9534f;
+        }
     </style>
 {% endblock %}
 
@@ -154,22 +231,37 @@
 <h1>🚀 Confirmar Ejecución Manual</h1>
 
 <div class="summary-box">
-    <strong>📊 Resumen:</strong> Has seleccionado <strong>{{ total_tareas }}</strong> tarea(s) habilitada(s) para ejecutar manualmente.
+    <strong>📊 Resumen:</strong> Has seleccionado <strong>{{ total_tareas }}</strong> tarea(s) para ejecutar manualmente.
 </div>
+
+{% if tareas_inactivas %}
+<div class="warning-box inactive">
+    <strong>⚠️ ADVERTENCIA:</strong> Estás ejecutando <strong>{{ tareas_inactivas|length }}</strong> tarea(s) INACTIVA(S) manualmente.<br>
+    <strong>✅ Solo se ejecutarán en OLTs HABILITADAS.</strong> Las OLTs deshabilitadas serán ignoradas.
+</div>
+{% endif %}
 
 <table class="task-table">
     <thead>
         <tr>
             <th>Tarea</th>
+            <th>Estado</th>
             <th>Tipo</th>
             <th>OID</th>
-            <th>OLTs Afectadas</th>
+            <th>OLTs Habilitadas</th>
         </tr>
     </thead>
     <tbody>
         {% for tarea in queryset %}
         <tr>
             <td><strong>{{ tarea.nombre }}</strong></td>
+            <td>
+                {% if tarea.enabled %}
+                    <span class="active-badge">🟢 ACTIVA</span>
+                {% else %}
+                    <span class="inactive-badge">🔴 INACTIVA</span>
+                {% endif %}
+            </td>
             <td>
                 {% if tarea.job_type == 'descubrimiento' %}
                     <span class="badge discovery">DISCOVERY</span>
@@ -184,7 +276,19 @@
                 <span class="oid-info">{{ tarea.oid.oid }}</span>
             </td>
             <td>
-                <span class="olt-count">{{ tarea.job_hosts.filter.count }}</span> OLT(s)
+                <span class="olt-count">{{ tarea.olts.count }}</span> OLT(s) en tarea<br>
+                <div class="olt-list">
+                    {% for olt in tarea.olts.all %}
+                        <div class="olt-item">
+                            {% if olt.habilitar_olt %}
+                                <span class="olt-enabled">✅ {{ olt.abreviatura }}</span>
+                            {% else %}
+                                <span class="olt-disabled">❌ {{ olt.abreviatura }} (deshabilitada)</span>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+                <span style="font-size: 11px; color: #28a745;">✅ Solo OLTs habilitadas se ejecutarán</span>
             </td>
         </tr>
         {% endfor %}
