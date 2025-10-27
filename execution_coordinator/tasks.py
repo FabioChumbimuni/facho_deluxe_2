@@ -270,13 +270,17 @@ def check_delivery_task(self):
     try:
         stats = check_pending_deliveries()
         
+        # Solo loguear si hay pérdidas o si se revisaron tareas
         if stats['lost'] > 0:
             coordinator_logger.warning(
                 f"⚠️ Verificación de entregas: {stats['lost']} de {stats['checked']} tareas perdidas",
                 event_type='DELIVERY_CHECK',
                 details=stats
             )
+        # Si checked > 0 pero lost == 0, todo está bien (no loguear)
         
+        # Retornar stats para monitoreo pero sin logging automático de Celery
+        # (el loglevel WARNING ya filtra los INFO de Celery)
         return stats
         
     except Exception as e:

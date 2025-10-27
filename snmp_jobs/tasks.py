@@ -867,18 +867,21 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                     logger.warning(f"Error en callback coordinator: {callback_error}")
 
             except EasySNMPError as e:
-                # Manejar errores SNMP específicos con mensajes más claros
-                error_msg = str(e).lower()
+                # Manejar errores SNMP específicos con el error REAL de la librería
+                error_real = str(e)
+                error_msg = error_real.lower()
+                
+                # Construir mensaje más específico INCLUYENDO el error original
                 if 'timeout' in error_msg or 'timed out' in error_msg:
-                    friendly_error = f"Timeout SNMP - OLT {olt.abreviatura} ({olt.ip_address}) no responde"
+                    friendly_error = f"Timeout SNMP - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
                 elif 'no such name' in error_msg or 'no such object' in error_msg:
-                    friendly_error = f"OID no encontrado - OLT {olt.abreviatura} ({olt.ip_address})"
+                    friendly_error = f"OID no encontrado - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
                 elif 'authentication' in error_msg or 'community' in error_msg:
-                    friendly_error = f"Error de autenticación - Comunidad SNMP incorrecta para OLT {olt.abreviatura} ({olt.ip_address})"
+                    friendly_error = f"Error autenticación - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
                 elif 'connection' in error_msg or 'refused' in error_msg:
-                    friendly_error = f"Conexión rechazada - OLT {olt.abreviatura} ({olt.ip_address}) no disponible"
+                    friendly_error = f"Conexión rechazada - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
                 else:
-                    friendly_error = f"Error SNMP - OLT {olt.abreviatura} ({olt.ip_address}): {str(e)}"
+                    friendly_error = f"Error SNMP - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
                 
                 logger.error(f"❌ {friendly_error}")
                 
