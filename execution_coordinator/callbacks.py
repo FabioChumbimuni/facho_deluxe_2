@@ -64,68 +64,42 @@ def on_task_completed(olt_id, task_name, task_type, duration_ms, status='SUCCESS
         queue_items = redis_client.lrange(scheduler.queue_key, 0, -1)
         
         if queue_items:
-            # Verificar si la siguiente tarea en cola debe respetar desfase
-            import json
-            next_task = json.loads(queue_items[0])
+            # LOCK TEMPORAL: Evitar que coordinator loop interfiera mientras procesamos cola
+            processing_key = f"lock:processing_queue:{olt_id}"
+            redis_client.set(processing_key, '1', ex=10)  # 10 segundos
             
-            # Obtener tipo de tarea
-            from snmp_jobs.models import SnmpJob
             try:
-                job = SnmpJob.objects.get(id=next_task['job_id'])
+                # Ejecutar la siguiente desde cola
+                coordinator_logger.info(
+                    f"🔄 Hay {len(queue_items)} tarea(s) en cola, ejecutando siguiente INMEDIATAMENTE",
+                    olt=olt,
+                    event_type='EXECUTION_STARTED'
+                )
                 
-                # Verificar si debe esperar por desfase
-                now = timezone.now()
-                current_second = now.second
+                executed = scheduler.execute_next_in_queue(olt)
                 
-                should_wait = False
-                if job.job_type == 'get':
-                    # GET debe ejecutarse en segundo 10
-                    if current_second < 10:
-                        should_wait = True
-                        wait_seconds = 10 - current_second
-                        coordinator_logger.info(
-                            f"⏸️ GET en cola esperará {wait_seconds}s para respetar desfase (segundo 10)",
-                            olt=olt
-                        )
-                
-                if should_wait:
-                    # NO ejecutar ahora, dejar que el coordinator loop lo maneje
+                if executed:
                     coordinator_logger.info(
-                        f"✓ OLT libre, tarea en cola esperará desfase",
-                        olt=olt,
-                        event_type='EXECUTION_COMPLETED'
-                    )
-                else:
-                    # LOCK TEMPORAL: Evitar que coordinator loop interfiera mientras procesamos cola
-                    processing_key = f"lock:processing_queue:{olt_id}"
-                    redis_client.set(processing_key, '1', ex=10)  # 10 segundos
-                    
-                    # Ejecutar la siguiente INMEDIATAMENTE
-                    coordinator_logger.info(
-                        f"🔄 Hay {len(queue_items)} tarea(s) en cola, ejecutando siguiente INMEDIATAMENTE",
+                        f"▶️ Siguiente tarea iniciada sin demora",
                         olt=olt,
                         event_type='EXECUTION_STARTED'
                     )
-                    
-                    executed = scheduler.execute_next_in_queue(olt)
-                    
-                    # Liberar lock de procesamiento
-                    redis_client.delete(processing_key)
-                    
-                    if executed:
-                        coordinator_logger.info(
-                            f"▶️ Siguiente tarea iniciada sin demora",
-                            olt=olt,
-                            event_type='EXECUTION_STARTED'
-                        )
-                    else:
-                        coordinator_logger.info(
-                            f"⊘ Siguiente tarea omitida (ya ejecutada recientemente o no disponible)",
-                            olt=olt
-                        )
+                else:
+                    coordinator_logger.info(
+                        f"⊘ Siguiente tarea omitida (ya ejecutada recientemente o no disponible)",
+                        olt=olt
+                    )
             
             except Exception as queue_error:
-                logger.error(f"Error procesando cola: {queue_error}")
+                coordinator_logger.error(
+                    f"❌ Error procesando cola: {queue_error}",
+                    olt=olt,
+                    event_type='EXECUTION_ERROR'
+                )
+            
+            finally:
+                # Liberar lock de procesamiento
+                redis_client.delete(processing_key)
         else:
             # No hay más tareas en cola
             coordinator_logger.info(

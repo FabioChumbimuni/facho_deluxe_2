@@ -2,6 +2,7 @@
 Tareas Celery del Coordinator
 
 - coordinator_loop_task: Loop principal que se ejecuta cada 5 segundos
+- check_delivery_task: Verifica que tareas fueron entregadas a Celery (cada 30s)
 - cleanup_old_coordinator_logs: Limpieza de logs antiguos
 """
 
@@ -12,6 +13,7 @@ import logging
 
 from .coordinator import ExecutionCoordinator
 from .logger import coordinator_logger
+from .delivery_checker import check_pending_deliveries
 
 logger = logging.getLogger(__name__)
 
@@ -248,4 +250,39 @@ def check_quota_violations_task(self):
         'status': 'success',
         'violations_created': incomplete_trackers.count()
     }
+
+
+@shared_task(bind=True, name='execution_coordinator.tasks.check_delivery_task')
+def check_delivery_task(self):
+    """
+    Verifica que tareas PENDING fueron entregadas a Celery
+    
+    Ejecuta cada 30 segundos para detectar tareas "perdidas" que:
+    - Se crearon en la BD
+    - Se enviaron a Celery (.delay())
+    - Pero nunca fueron recogidas por un worker
+    
+    Si una tarea está PENDING > 30s y no aparece en Celery:
+    - La marca como INTERRUPTED
+    - Loguea el problema
+    - Las estadísticas se usan para monitoreo
+    """
+    try:
+        stats = check_pending_deliveries()
+        
+        if stats['lost'] > 0:
+            coordinator_logger.warning(
+                f"⚠️ Verificación de entregas: {stats['lost']} de {stats['checked']} tareas perdidas",
+                event_type='DELIVERY_CHECK',
+                details=stats
+            )
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error en check_delivery_task: {e}")
+        return {
+            'status': 'error',
+            'error': str(e)
+        }
 

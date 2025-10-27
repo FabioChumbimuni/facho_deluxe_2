@@ -223,6 +223,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'execution_coordinator.tasks.coordinator_loop_task',
         'schedule': 5.0,  # Cada 5 segundos - loop continuo del coordinator
     },
+    'check-delivery': {
+        'task': 'execution_coordinator.tasks.check_delivery_task',
+        'schedule': 30.0,  # Cada 30 segundos - verificar que tareas fueron entregadas a Celery
+    },
     'check-quota-violations': {
         'task': 'execution_coordinator.tasks.check_quota_violations_task',
         'schedule': 3600.0,  # Cada hora - verificar violaciones de cuota

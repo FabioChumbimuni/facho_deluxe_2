@@ -45,9 +45,10 @@ class DynamicScheduler:
         lock_data = redis_client.get(self.lock_key)
         if lock_data is not None:
             if log_reason:
+                olt = OLT.objects.get(id=self.olt_id)
                 coordinator_logger.info(
-                    f"⏸️ OLT {self.olt_id} ejecutando tarea",
-                    olt=OLT.objects.get(id=self.olt_id)
+                    f"⏸️ OLT {self.olt_id} ({olt.abreviatura}) ejecutando tarea",
+                    olt=olt
                 )
             return True
         
@@ -56,9 +57,10 @@ class DynamicScheduler:
         if redis_client.exists(retry_key):
             ttl = redis_client.ttl(retry_key)
             if log_reason:
+                olt = OLT.objects.get(id=self.olt_id)
                 coordinator_logger.warning(
-                    f"🛑 OLT {self.olt_id} EN REINTENTO - bloqueada (expira en {ttl}s)",
-                    olt=OLT.objects.get(id=self.olt_id)
+                    f"🛑 OLT {self.olt_id} ({olt.abreviatura}) EN REINTENTO - bloqueada (expira en {ttl}s)",
+                    olt=olt
                 )
             return True
         
@@ -244,22 +246,46 @@ class DynamicScheduler:
             )
             
             # Encolar en Celery según tipo
-            if job.job_type == 'descubrimiento':
-                from snmp_jobs.tasks import discovery_main_task
-                discovery_main_task.delay(job.id, self.olt_id, execution.id)
-            elif job.job_type == 'get':
-                from snmp_get.tasks import get_main_task
-                get_main_task.delay(job.id, self.olt_id, execution.id)
+            celery_task_id = None
+            try:
+                if job.job_type == 'descubrimiento':
+                    from snmp_jobs.tasks import discovery_main_task
+                    result = discovery_main_task.delay(job.id, self.olt_id, execution.id)
+                    celery_task_id = result.id
+                    logger.debug(f"Discovery task enqueued: {result.id}")
+                elif job.job_type == 'get':
+                    from snmp_get.tasks import get_main_task
+                    result = get_main_task.delay(job.id, self.olt_id, execution.id)
+                    celery_task_id = result.id
+                    logger.debug(f"GET task enqueued: {result.id}")
+                
+                # Guardar celery_task_id para tracking
+                if celery_task_id:
+                    execution.celery_task_id = celery_task_id
+                    execution.save(update_fields=['celery_task_id'])
+                    coordinator_logger.debug(
+                        f"📤 Tarea enviada a Celery: {celery_task_id}",
+                        olt=olt,
+                        details={'celery_task_id': celery_task_id, 'execution_id': execution.id}
+                    )
+                
+            except Exception as celery_error:
+                logger.error(f"❌ Error enviando tarea a Celery: {celery_error}")
+                execution.status = 'FAILED'
+                execution.error_message = f"Error encolando en Celery: {celery_error}"
+                execution.save(update_fields=['status', 'error_message'])
+                return False
             
             coordinator_logger.info(
-                f"▶️ Ejecutando INMEDIATAMENTE: {next_task['job_name']} (desde cola)",
+                f"▶️ Ejecutando INMEDIATAMENTE: {next_task['job_name']} en {olt.abreviatura} (desde cola)",
                 olt=olt,
                 event_type='EXECUTION_STARTED',
                 details={
                     'task_name': next_task['job_name'],
                     'task_type': next_task['job_type'],
                     'priority': next_task.get('priority', 50),
-                    'from_queue': True
+                    'from_queue': True,
+                    'execution_id': execution.id
                 }
             )
             
@@ -308,7 +334,7 @@ class DynamicScheduler:
                     self.enqueue_task(task)
                     
                     coordinator_logger.info(
-                        f"📋 {task['job_name']} encolada (OLT ocupada, ejecutará cuando termine actual)",
+                        f"📋 {task['job_name']} encolada en {olt.abreviatura} (OLT ocupada, ejecutará cuando termine actual)",
                         olt=olt,
                         event_type='TASK_ADDED',
                         details=task
@@ -416,18 +442,41 @@ class DynamicScheduler:
             )
             
             # Encolar en Celery según tipo
-            if job.job_type == 'descubrimiento':
-                from snmp_jobs.tasks import discovery_main_task
-                discovery_main_task.delay(job.id, self.olt_id, execution.id)
-            elif job.job_type == 'get':
-                from snmp_get.tasks import get_main_task
-                get_main_task.delay(job.id, self.olt_id, execution.id)
+            celery_task_id = None
+            try:
+                if job.job_type == 'descubrimiento':
+                    from snmp_jobs.tasks import discovery_main_task
+                    result = discovery_main_task.delay(job.id, self.olt_id, execution.id)
+                    celery_task_id = result.id
+                    logger.debug(f"Discovery task enqueued: {result.id}")
+                elif job.job_type == 'get':
+                    from snmp_get.tasks import get_main_task
+                    result = get_main_task.delay(job.id, self.olt_id, execution.id)
+                    celery_task_id = result.id
+                    logger.debug(f"GET task enqueued: {result.id}")
+                
+                # Guardar celery_task_id para tracking
+                if celery_task_id:
+                    execution.celery_task_id = celery_task_id
+                    execution.save(update_fields=['celery_task_id'])
+                    coordinator_logger.debug(
+                        f"📤 Tarea enviada a Celery: {celery_task_id}",
+                        olt=olt,
+                        details={'celery_task_id': celery_task_id, 'execution_id': execution.id}
+                    )
+                
+            except Exception as celery_error:
+                logger.error(f"❌ Error enviando tarea a Celery: {celery_error}")
+                execution.status = 'FAILED'
+                execution.error_message = f"Error encolando en Celery: {celery_error}"
+                execution.save(update_fields=['status', 'error_message'])
+                return False
             
             coordinator_logger.info(
-                f"▶️ Ejecutando: {task_info['job_name']} (P{task_info['priority']})",
+                f"▶️ Ejecutando: {task_info['job_name']} en {olt.abreviatura} (P{task_info['priority']})",
                 olt=olt,
                 event_type='EXECUTION_STARTED',
-                details=task_info
+                details={**task_info, 'execution_id': execution.id}
             )
             
             # next_run_at ya fue actualizado ANTES de crear la ejecución
