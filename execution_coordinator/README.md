@@ -78,8 +78,7 @@ Campos principales:
 - `details`: Datos adicionales en JSON
 - `timestamp`: Fecha/hora del evento
 
-#### **ExecutionPlan**
-Plan de ejecución generado por el coordinator.
+(ExecutionPlan eliminado - no se usaba)
 
 Campos principales:
 - `olt`: OLT asociada
@@ -158,7 +157,6 @@ Features:
 - **QuotaTrackerAdmin**: Barras de progreso, badges de estado, indicadores de riesgo
 - **QuotaViolationAdmin**: Badges de severidad, reportes JSON formateados
 - **CoordinatorLogAdmin**: Filtros por nivel/tipo, búsqueda, detalles JSON
-- **ExecutionPlanAdmin**: Visualización de planes, métricas de completitud
 
 ## 🚀 Uso
 
@@ -271,7 +269,6 @@ CELERY_BEAT_SCHEDULE = {
 - **Cuotas por hora**: Ver en QuotaTracker
 - **Violaciones**: Ver en QuotaViolation
 - **Eventos del coordinator**: Ver en CoordinatorLog
-- **Planes generados**: Ver en ExecutionPlan
 
 ### Queries Útiles
 

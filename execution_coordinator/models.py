@@ -210,54 +210,5 @@ class CoordinatorLog(models.Model):
         )
 
 
-class ExecutionPlan(models.Model):
-    """
-    Plan de ejecución generado por el coordinator
-    Representa el orden y timing de tareas para una OLT en un período
-    """
-    olt = models.ForeignKey('hosts.OLT', on_delete=models.CASCADE, db_column='olt_id', related_name='execution_plans')
-    
-    # Período del plan
-    period_start = models.DateTimeField(db_index=True)
-    period_end = models.DateTimeField()
-    
-    # Plan serializado (lista de tareas con timing)
-    plan_data = models.JSONField(help_text='Plan completo en formato JSON')
-    
-    # Estado del plan
-    STATUS_CHOICES = [
-        ('ACTIVE', 'Activo'),
-        ('COMPLETED', 'Completado'),
-        ('SUPERSEDED', 'Reemplazado'),
-        ('ABORTED', 'Abortado'),
-    ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
-    
-    # Métricas
-    total_tasks = models.IntegerField(default=0)
-    completed_tasks = models.IntegerField(default=0)
-    failed_tasks = models.IntegerField(default=0)
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'execution_plans'
-        ordering = ['-period_start', 'olt']
-        indexes = [
-            models.Index(fields=['olt', 'period_start']),
-            models.Index(fields=['status']),
-        ]
-        verbose_name = 'Plan de Ejecución'
-        verbose_name_plural = 'Planes de Ejecución'
-    
-    def __str__(self):
-        olt_name = self.olt.abreviatura if self.olt else 'N/A'
-        return f"{olt_name} - Plan {self.period_start.strftime('%Y-%m-%d %H:%M')}"
-    
-    def completion_percentage(self):
-        """Calcula el porcentaje de completitud"""
-        if self.total_tasks == 0:
-            return 0.0
-        return (self.completed_tasks / self.total_tasks) * 100
+# ExecutionPlan eliminado - no se usaba en el sistema
+# El coordinator trabaja dinámicamente sin generar planes estáticos

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.utils import timezone
 from datetime import timedelta
-from .models import QuotaTracker, QuotaViolation, CoordinatorLog, ExecutionPlan
+from .models import QuotaTracker, QuotaViolation, CoordinatorLog
 
 
 @admin.register(QuotaTracker)
@@ -265,83 +265,4 @@ class CoordinatorLogAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(ExecutionPlan)
-class ExecutionPlanAdmin(admin.ModelAdmin):
-    list_display = ('olt_display', 'period_display', 'tasks_display', 'completion_bar', 'status_badge', 'created_at')
-    list_filter = ('status', 'olt', 'period_start')
-    search_fields = ('olt__abreviatura',)
-    readonly_fields = ('created_at', 'updated_at', 'plan_data_display')
-    date_hierarchy = 'period_start'
-    
-    fieldsets = (
-        ('OLT y Período', {
-            'fields': ('olt', 'period_start', 'period_end')
-        }),
-        ('Métricas', {
-            'fields': ('total_tasks', 'completed_tasks', 'failed_tasks')
-        }),
-        ('Estado', {
-            'fields': ('status',)
-        }),
-        ('Plan', {
-            'fields': ('plan_data_display',),
-            'classes': ('collapse',)
-        }),
-        ('Fechas', {
-            'fields': ('created_at', 'updated_at')
-        }),
-    )
-    
-    def olt_display(self, obj):
-        return obj.olt.abreviatura if obj.olt else 'N/A'
-    olt_display.short_description = 'OLT'
-    
-    def period_display(self, obj):
-        start = timezone.localtime(obj.period_start).strftime('%d/%m %H:%M')
-        return start
-    period_display.short_description = 'Período'
-    
-    def tasks_display(self, obj):
-        return f"{obj.completed_tasks}/{obj.total_tasks}"
-    tasks_display.short_description = 'Tareas'
-    
-    def completion_bar(self, obj):
-        percentage = obj.completion_percentage()
-        color = '#28a745' if percentage >= 80 else '#ffc107' if percentage >= 50 else '#dc3545'
-        
-        return format_html(
-            '<div style="width:100px; background-color:#e9ecef; border-radius:3px;">'
-            '<div style="width:{}%; background-color:{}; height:20px; border-radius:3px; text-align:center; color:white; font-size:11px; line-height:20px;">'
-            '{}%'
-            '</div>'
-            '</div>',
-            min(percentage, 100),
-            color,
-            int(percentage)
-        )
-    completion_bar.short_description = 'Progreso'
-    
-    def status_badge(self, obj):
-        colors = {
-            'ACTIVE': '#17a2b8',
-            'COMPLETED': '#28a745',
-            'SUPERSEDED': '#6c757d',
-            'ABORTED': '#dc3545',
-        }
-        color = colors.get(obj.status, '#6c757d')
-        
-        return format_html(
-            '<span style="background-color:{}; color:white; padding:3px 8px; border-radius:3px; font-size:11px;">{}</span>',
-            color,
-            obj.get_status_display()
-        )
-    status_badge.short_description = 'Estado'
-    
-    def plan_data_display(self, obj):
-        import json
-        plan_json = json.dumps(obj.plan_data, indent=2, ensure_ascii=False)
-        return format_html(
-            '<pre style="background-color:#f8f9fa; padding:10px; border-radius:5px; font-size:12px; max-height:500px; overflow:auto;">{}</pre>',
-            plan_json
-        )
-    plan_data_display.short_description = 'Datos del Plan'
+# ExecutionPlanAdmin eliminado - modelo no usado en el sistema

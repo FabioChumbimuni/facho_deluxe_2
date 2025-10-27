@@ -18,7 +18,7 @@ from redis import Redis
 from django.conf import settings
 
 from .logger import CoordinatorLogger
-from .models import QuotaTracker, CoordinatorLog, ExecutionPlan
+from .models import QuotaTracker, CoordinatorLog
 
 # Logger específico del coordinator
 logger = CoordinatorLogger('coordinator_loop')
