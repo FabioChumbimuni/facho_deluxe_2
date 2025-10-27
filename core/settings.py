@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "hosts",
     "snmp_jobs",
     "executions",
+    "execution_coordinator",
     "discovery",
     "brands",
     "oids",
@@ -190,6 +191,10 @@ CELERY_TASK_ROUTES = {
     # Tareas de limpieza GET
     'snmp_get.cleanup_tasks.cleanup_interrupted_executions': {'queue': 'cleanup'},
     'snmp_get.cleanup_tasks.cancel_pending_executions_for_disabled_jobs': {'queue': 'cleanup'},
+    # Tareas del Coordinator (NUEVO)
+    'execution_coordinator.tasks.coordinator_loop_task': {'queue': 'coordinator'},
+    'execution_coordinator.tasks.cleanup_old_coordinator_logs_task': {'queue': 'cleanup'},
+    'execution_coordinator.tasks.check_quota_violations_task': {'queue': 'coordinator'},
 }
 
 # Configuración de workers
@@ -208,9 +213,23 @@ CELERY_TASK_TIME_LIMIT = 600       # 10 minutos
 
 # Configuración de beat (scheduler)
 CELERY_BEAT_SCHEDULE = {
-    'dispatcher-check-and-enqueue': {
-        'task': 'snmp_jobs.tasks.dispatcher_check_and_enqueue',
-        'schedule': 10.0,  # Cada 10 segundos - frecuencia fija para ser responsivo
+    # DESACTIVADO: El dispatcher original ya no se usa
+    # El coordinator ahora gestiona TODAS las ejecuciones
+    # 'dispatcher-check-and-enqueue': {
+    #     'task': 'snmp_jobs.tasks.dispatcher_check_and_enqueue',
+    #     'schedule': 10.0,
+    # },
+    'coordinator-loop': {
+        'task': 'execution_coordinator.tasks.coordinator_loop_task',
+        'schedule': 5.0,  # Cada 5 segundos - loop continuo del coordinator
+    },
+    'check-quota-violations': {
+        'task': 'execution_coordinator.tasks.check_quota_violations_task',
+        'schedule': 3600.0,  # Cada hora - verificar violaciones de cuota
+    },
+    'cleanup-coordinator-logs': {
+        'task': 'execution_coordinator.tasks.cleanup_old_coordinator_logs_task',
+        'schedule': 86400.0,  # Una vez al día - limpiar logs antiguos del coordinator
     },
     'odf-scheduled-collection': {
         'task': 'odf_management.tasks.sync_scheduled_olts',

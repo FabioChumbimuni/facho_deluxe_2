@@ -71,7 +71,7 @@ class DiscoveryService:
             results['total_found'] = len(walk_results)
             results['walk_successful'] = True
             
-            self.logger.info(f"💾 Resultados guardados en memoria. Total: {len(walk_results)}")
+            # Log innecesario removido
             
         except Exception as e:
             # Log del error sin traceback para mantener logs limpios
@@ -92,7 +92,7 @@ class DiscoveryService:
         """
         Procesa los resultados del walk SOLO cuando la tarea es SUCCESS
         """
-        self.logger.info(f"🔄 Procesando resultados exitosos para OLT {self.olt.abreviatura}")
+        # Log innecesario removido
         
         results = {
             'new_index_created': 0,
@@ -143,12 +143,11 @@ class DiscoveryService:
             
             # Usar el OID de la tarea
             task_oid = self.job.oid.oid
-            self.logger.info(f"🌐 Ejecutando walk en {task_oid}")
-            self.logger.info(f"🔍 ANTES DEL WALK - OLT: {self.olt.abreviatura}, IP: {self.olt.ip_address}")
+            # Logs innecesarios removidos - solo mantener resultado final
             raw_results = session.walk(task_oid)
             self.logger.info(f"🔍 DESPUÉS DEL WALK - Resultados: {len(raw_results)}")
             
-            self.logger.info(f"📡 Raw results obtenidos: {len(raw_results)} elementos")
+            # Log innecesario removido
             
             results = []
             for i, item in enumerate(raw_results):

@@ -796,6 +796,19 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         
         logger.info(f"✅ execute_get_main completado en {execution.duration_ms}ms")
         
+        # CALLBACK AL COORDINATOR: Notificar que GET terminó exitosamente
+        try:
+            from execution_coordinator.callbacks import on_task_completed
+            on_task_completed(
+                olt_id=olt.id,
+                task_name=job.nombre,
+                task_type=job.job_type,
+                duration_ms=execution.duration_ms,
+                status='SUCCESS'
+            )
+        except Exception as callback_error:
+            logger.warning(f"Error en callback coordinator: {callback_error}")
+        
     except Exception as e:
         logger.error(f"❌ Error en execute_get_main: {str(e)}")
         
@@ -808,6 +821,18 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             execution.save(update_fields=['status', 'finished_at', 'duration_ms', 'error_message'])
         except Exception as save_error:
             logger.error(f"❌ Error guardando estado de ejecución: {save_error}")
+        
+        # CALLBACK AL COORDINATOR: Notificar que GET falló
+        try:
+            from execution_coordinator.callbacks import on_task_failed
+            on_task_failed(
+                olt_id=olt_id,
+                task_name=job.nombre,
+                task_type=job.job_type,
+                error_message=str(e)
+            )
+        except Exception as callback_error:
+            logger.warning(f"Error en callback coordinator: {callback_error}")
         
         # Programar reintento si corresponde
         if attempt < job.max_retries:

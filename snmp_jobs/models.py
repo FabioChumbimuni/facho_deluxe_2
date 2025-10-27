@@ -626,11 +626,21 @@ class SnmpJob(models.Model):
 class SnmpJobHost(models.Model):
     """
     Through-model job <-> olt. Guarda estado y parámetros por OLT (por ejemplo cola, enabled).
+    
+    IMPORTANTE: Ahora gestiona next_run_at POR OLT de forma independiente.
+    Esto permite que cada OLT tenga su propio horario de ejecución sin afectar a otras OLTs.
     """
     snmp_job = models.ForeignKey(SnmpJob, on_delete=models.CASCADE, db_column="snmp_job_id", related_name="job_hosts")
     olt = models.ForeignKey("hosts.OLT", on_delete=models.CASCADE, db_column="olt_id", related_name="job_host_links")
 
     enabled = models.BooleanField(default=True)
+    
+    # NUEVO: Gestión de horarios POR OLT (independiente de otras OLTs)
+    next_run_at = models.DateTimeField(null=True, blank=True, db_index=True, 
+                                       help_text='Próxima ejecución para ESTA OLT específica')
+    last_run_at = models.DateTimeField(null=True, blank=True,
+                                       help_text='Última ejecución para ESTA OLT')
+    
     last_success_at = models.DateTimeField(null=True, blank=True)
     last_failure_at = models.DateTimeField(null=True, blank=True)
     consecutive_failures = models.PositiveIntegerField(default=0)
@@ -646,9 +656,55 @@ class SnmpJobHost(models.Model):
         indexes = [
             models.Index(fields=["olt", "snmp_job"]),
             models.Index(fields=["snmp_job"]),
+            models.Index(fields=["next_run_at"]),
         ]
         verbose_name = "OLT en Tarea"
         verbose_name_plural = "OLTs en Tarea"
 
     def __str__(self):
         return f"{self.snmp_job.nombre} -> {self.olt.abreviatura or self.olt.ip_address}"
+    
+    def initialize_next_run(self, is_new=False):
+        """
+        Inicializa next_run_at cuando se crea o habilita el job_host
+        
+        Reglas:
+        - Job NUEVO o recién HABILITADO: next_run = now + 1 minuto
+        - Después de ejecutar: next_run = now + intervalo + DESFASE
+        
+        DESFASE INTENCIONAL (evita colisiones):
+        - Discovery: segundo 0 (XX:XX:00)
+        - GET:       segundo 10 (XX:XX:10)
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        now = timezone.now()
+        
+        if is_new or not self.last_run_at:
+            # Primera vez o recién habilitado: ejecutar en 1 minuto CON DESFASE
+            next_time = now + timedelta(minutes=1)
+            
+            # DESFASE INTENCIONAL desde el inicio
+            if self.snmp_job.job_type == 'descubrimiento':
+                # Discovery: segundo 0
+                next_time = next_time.replace(second=0, microsecond=0)
+            elif self.snmp_job.job_type == 'get':
+                # GET: segundo 10
+                next_time = next_time.replace(second=10, microsecond=0)
+            
+            self.next_run_at = next_time
+        else:
+            # Ya se ejecutó antes: respetar intervalo + desfase
+            interval_seconds = self.snmp_job.interval_seconds or 300
+            next_time = now + timedelta(seconds=interval_seconds)
+            
+            # DESFASE INTENCIONAL según tipo de tarea
+            if self.snmp_job.job_type == 'descubrimiento':
+                # Discovery: alinear al segundo 0
+                next_time = next_time.replace(second=0, microsecond=0)
+            elif self.snmp_job.job_type == 'get':
+                # GET: alinear al segundo 10 (10s después de Discovery)
+                next_time = next_time.replace(second=10, microsecond=0)
+            
+            self.next_run_at = next_time

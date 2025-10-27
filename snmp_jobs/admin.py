@@ -350,25 +350,78 @@ class SnmpJobAdmin(admin.ModelAdmin):
     get_status_icon.admin_order_field = 'enabled'
     
     def get_next_run_display(self, obj):
-        """Muestra la próxima ejecución en formato legible"""
-        return obj.get_next_run_display()
+        """
+        Muestra la próxima ejecución MÁS CERCANA entre todas las OLTs
+        (Cada OLT tiene su propio next_run_at en SnmpJobHost)
+        """
+        if not obj.enabled:
+            return "No disponible"
+        
+        # Buscar el next_run_at más cercano entre todos los job_hosts
+        from snmp_jobs.models import SnmpJobHost
+        import pytz
+        
+        next_runs = SnmpJobHost.objects.filter(
+            snmp_job=obj,
+            enabled=True,
+            next_run_at__isnull=False,
+            olt__habilitar_olt=True  # Solo OLTs habilitadas
+        ).values_list('next_run_at', 'olt__abreviatura').order_by('next_run_at')[:1]
+        
+        if next_runs:
+            next_run, olt_name = next_runs[0]
+            lima_tz = pytz.timezone('America/Lima')
+            next_run_lima = next_run.astimezone(lima_tz)
+            return f"{next_run_lima.strftime('%d/%m/%Y %H:%M:%S')} ({olt_name})"
+        
+        return "No programado"
     get_next_run_display.short_description = 'Próxima Ejecución'
-    get_next_run_display.admin_order_field = 'next_run_at'
     
     def get_time_until_next_run(self, obj):
-        """Muestra el tiempo restante hasta la próxima ejecución"""
-        time_until = obj.get_time_until_next_run()
-        
-        # Si el job está deshabilitado, mostrar sin ícono
+        """
+        Muestra el tiempo restante hasta la próxima ejecución MÁS CERCANA
+        """
         if not obj.enabled:
-            return f"⚫ {time_until}"
-        elif obj.is_ready_to_run():
-            return f"🔴 {time_until}"
+            return "⚫ No disponible"
+        
+        # Buscar el next_run_at más cercano
+        from snmp_jobs.models import SnmpJobHost
+        from django.utils import timezone
+        
+        next_run_obj = SnmpJobHost.objects.filter(
+            snmp_job=obj,
+            enabled=True,
+            next_run_at__isnull=False,
+            olt__habilitar_olt=True  # Solo OLTs habilitadas
+        ).order_by('next_run_at').first()
+        
+        if not next_run_obj or not next_run_obj.next_run_at:
+            return "⚫ No programado"
+        
+        now = timezone.now()
+        if next_run_obj.next_run_at <= now:
+            return f"🔴 Listo para ejecutar"
+        
+        diff = next_run_obj.next_run_at - now
+        total_seconds = int(diff.total_seconds())
+        
+        if total_seconds < 60:
+            return f"⏰ En {total_seconds}s"
+        elif total_seconds < 3600:
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+            return f"⏰ En {minutes}m {seconds}s"
+        elif total_seconds < 86400:
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            return f"⏰ En {hours}h {minutes}m"
         else:
-            return f"⏰ {time_until}"
+            days = total_seconds // 86400
+            hours = (total_seconds % 86400) // 3600
+            return f"⏰ En {days}d {hours}h"
     get_time_until_next_run.short_description = 'Tiempo Restante'
-    get_time_until_next_run.admin_order_field = 'next_run_at'
 
+    # Auto-refresh removido por solicitud del usuario
     def deshabilitar_tareas_seleccionadas(self, request, queryset):
         """Acción para deshabilitar tareas SNMP seleccionadas"""
         # Filtrar solo las tareas que están habilitadas

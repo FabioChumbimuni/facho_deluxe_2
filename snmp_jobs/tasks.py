@@ -20,8 +20,10 @@ redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
 def get_redis_lock(olt_id, timeout=300):
     """
     Obtiene un lock de Redis para una OLT específica
+    
+    IMPORTANTE: Usa la MISMA clave que el coordinator para consistencia
     """
-    lock_key = f"lock:snmp:olt:{olt_id}"
+    lock_key = f"lock:execution:olt:{olt_id}"
     return Lock(redis_client, lock_key, timeout=timeout)
 
 def calculate_next_run(interval_raw):
@@ -460,7 +462,7 @@ def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
     Si falla, envía reintentos a cola separada (discovery_retry)
     NO usa reintentos automáticos de Celery (max_retries=0)
     """
-    logger.info(f"🚀 discovery_main_task: Iniciando para job {snmp_job_id}, OLT {olt_id}, execution {execution_id}")
+    # Log simplificado - solo información esencial
     
     try:
         execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_main')
@@ -489,6 +491,15 @@ def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
             
             # SOLO enviar reintentos si NO es ejecución manual
             if execution.requested_by is None:  # Ejecución automática (sin usuario)
+                # MARCAR OLT EN REINTENTO: Bloquear nuevas ejecuciones
+                from redis import Redis
+                from django.conf import settings
+                redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
+                retry_key = f"olt:retrying:{olt_id}"
+                redis_client.set(retry_key, '1', ex=600)  # Expira en 10 min (por si falla el cleanup)
+                
+                logger.info(f"⏸️ OLT {olt_id} marcada EN REINTENTO - bloqueadas nuevas ejecuciones")
+                
                 # Enviar reintento con delay de 30s
                 discovery_retry_task.apply_async(
                     args=[snmp_job_id, olt_id, execution_id, 1],
@@ -614,6 +625,13 @@ def discovery_retry_task(self, snmp_job_id, olt_id, execution_id, retry_number):
         # Verificar el estado real de la nueva ejecución después de execute_discovery
         retry_execution.refresh_from_db()
         if retry_execution.status == 'SUCCESS':
+            # DESMARCAR OLT: Reanudar ejecuciones normales
+            from redis import Redis
+            from django.conf import settings
+            redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
+            retry_key = f"olt:retrying:{olt_id}"
+            redis_client.delete(retry_key)
+            logger.info(f"✅ OLT {olt_id} desbloqueada - reinicio exitoso, ejecuciones reanudadas")
             logger.info(f"✅ discovery_retry_task: Reintento {retry_number} completado exitosamente")
             return  # Salir si fue exitoso
         
@@ -655,6 +673,13 @@ def discovery_retry_task(self, snmp_job_id, olt_id, execution_id, retry_number):
                 countdown=30  # 30 segundos de delay
             )
         else:
+            # DESMARCAR OLT: Reintentos agotados, reanudar ejecuciones normales
+            from redis import Redis
+            from django.conf import settings
+            redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
+            retry_key = f"olt:retrying:{olt_id}"
+            redis_client.delete(retry_key)
+            logger.info(f"⚠️ OLT {olt_id} desbloqueada - reintentos agotados, ejecuciones reanudadas")
             logger.info(f"❌ Todos los reintentos agotados para execution {execution_id}")
             
     except Exception as retry_exc:
@@ -676,7 +701,7 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
         with transaction.atomic():
             execution = Execution.objects.select_for_update().get(pk=execution_id)
             
-            logger.info(f"🔍 execute_discovery OBJETOS OBTENIDOS - Job: {execution.snmp_job.nombre}, OLT: {execution.olt.abreviatura}, Status: {execution.status}")
+            # Log simplificado - solo información esencial
             
             # Si ya está completada, salir
             if execution.status in ['SUCCESS', 'FAILED']:
@@ -713,7 +738,8 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 logger.warning(f"🔍 execute_discovery LOCK NO DISPONIBLE - {olt.abreviatura}")
                 raise Exception("Lock no disponible")
             
-            logger.info(f"🔍 execute_discovery LOCK OBTENIDO - {olt.abreviatura}")
+            # Lock obtenido - log innecesario removido
+            lock_released = False  # Bandera para controlar liberación del lock
             
             try:
                 # Marcar como en ejecución
@@ -822,6 +848,23 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 job_host.save()
                 
                 logger.info(f"Descubrimiento exitoso para OLT {olt.abreviatura}")
+                
+                # LIBERAR LOCK ANTES del callback (para que callback pueda ejecutar siguiente tarea)
+                lock.release()
+                lock_released = True  # Marcar como liberado
+                
+                # CALLBACK AL COORDINATOR: Notificar que la tarea terminó
+                try:
+                    from execution_coordinator.callbacks import on_task_completed
+                    on_task_completed(
+                        olt_id=olt.id,
+                        task_name=job.nombre,
+                        task_type=job.job_type,
+                        duration_ms=execution.duration_ms,
+                        status='SUCCESS'
+                    )
+                except Exception as callback_error:
+                    logger.warning(f"Error en callback coordinator: {callback_error}")
 
             except EasySNMPError as e:
                 # Manejar errores SNMP específicos con mensajes más claros
@@ -870,12 +913,28 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 job_host.last_failure_at = timezone.now()
                 job_host.save()
                 
+                # CALLBACK AL COORDINATOR: Notificar fallo
+                try:
+                    from execution_coordinator.callbacks import on_task_failed
+                    on_task_failed(
+                        olt_id=olt.id,
+                        task_name=job.nombre,
+                        task_type=job.job_type,
+                        error_message=friendly_error
+                    )
+                except Exception as callback_error:
+                    logger.warning(f"Error en callback coordinator: {callback_error}")
+                
                 # Re-lanzar con mensaje amigable
                 raise Exception(friendly_error)
                 
             finally:
-                # Liberar lock de Redis
-                lock.release()
+                # Liberar lock solo si NO fue liberado antes
+                if not lock_released:
+                    try:
+                        lock.release()
+                    except Exception:
+                        pass  # Lock ya fue liberado o no se pudo liberar
     
     except Exception as e:
         # NO usar logger.exception para evitar traceback en logs
