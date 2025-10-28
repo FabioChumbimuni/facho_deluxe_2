@@ -222,18 +222,28 @@ CELERY_BEAT_SCHEDULE = {
     'coordinator-loop': {
         'task': 'execution_coordinator.tasks.coordinator_loop_task',
         'schedule': 5.0,  # Cada 5 segundos - loop continuo del coordinator
+        'options': {
+            'queue': 'coordinator',
+            'expires': 4.0,  # Expira antes del siguiente
+        }
     },
     'check-delivery': {
         'task': 'execution_coordinator.tasks.check_delivery_task',
         'schedule': 30.0,  # Cada 30 segundos - verificar que tareas fueron entregadas a Celery
+        'options': {
+            'queue': 'coordinator',
+            'expires': 25.0,  # Expira antes del siguiente
+        }
     },
     'check-quota-violations': {
         'task': 'execution_coordinator.tasks.check_quota_violations_task',
         'schedule': 3600.0,  # Cada hora - verificar violaciones de cuota
+        'options': {'queue': 'coordinator'}
     },
     'cleanup-coordinator-logs': {
         'task': 'execution_coordinator.tasks.cleanup_old_coordinator_logs_task',
         'schedule': 86400.0,  # Una vez al día - limpiar logs antiguos del coordinator
+        'options': {'queue': 'coordinator'}
     },
     'odf-scheduled-collection': {
         'task': 'odf_management.tasks.sync_scheduled_olts',
