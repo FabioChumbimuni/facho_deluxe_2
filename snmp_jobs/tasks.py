@@ -886,16 +886,17 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 job_host.last_failure_at = timezone.now()
                 job_host.save()
                 
-                # Re-lanzar con mensaje amigable
-                raise Exception(friendly_error)
+                # Re-lanzar con el error REAL de la librería
+                raise Exception(error_real)
                 
             except Exception as e:
-                # Manejar otros errores con mensaje genérico
-                friendly_error = f"Error interno - OLT {olt.abreviatura} ({olt.ip_address}): {str(e)}"
-                logger.error(f"❌ {friendly_error}")
+                # Manejar otros errores - guardar el error tal cual
+                error_msg = str(e)
+                logger.error(f"❌ Error interno - OLT {olt.abreviatura} ({olt.ip_address}): {error_msg}")
                 
                 execution.status = 'FAILED'
-                execution.error_message = friendly_error
+                # Guardar el error SIN modificar
+                execution.error_message = error_msg
                 execution.finished_at = timezone.now()
                 execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
                 execution.save()
@@ -912,13 +913,13 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                         olt_id=olt.id,
                         task_name=job.nombre,
                         task_type=job.job_type,
-                        error_message=friendly_error
+                        error_message=error_msg
                     )
                 except Exception as callback_error:
                     logger.warning(f"Error en callback coordinator: {callback_error}")
                 
-                # Re-lanzar con mensaje amigable
-                raise Exception(friendly_error)
+                # Re-lanzar con el error original sin modificar
+                raise Exception(error_msg)
                 
             finally:
                 # Liberar lock solo si NO fue liberado antes
