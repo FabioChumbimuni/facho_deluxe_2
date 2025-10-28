@@ -867,27 +867,16 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                     logger.warning(f"Error en callback coordinator: {callback_error}")
 
             except EasySNMPError as e:
-                # Manejar errores SNMP específicos con el error REAL de la librería
+                # Capturar el error EXACTO de la librería EasySNMP SIN MODIFICAR
                 error_real = str(e)
-                error_msg = error_real.lower()
                 
-                # Construir mensaje más específico INCLUYENDO el error original
-                if 'timeout' in error_msg or 'timed out' in error_msg:
-                    friendly_error = f"Timeout SNMP - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
-                elif 'no such name' in error_msg or 'no such object' in error_msg:
-                    friendly_error = f"OID no encontrado - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
-                elif 'authentication' in error_msg or 'community' in error_msg:
-                    friendly_error = f"Error autenticación - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
-                elif 'connection' in error_msg or 'refused' in error_msg:
-                    friendly_error = f"Conexión rechazada - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
-                else:
-                    friendly_error = f"Error SNMP - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}"
-                
-                logger.error(f"❌ {friendly_error}")
+                # Log para el desarrollador (con contexto)
+                logger.error(f"❌ Error SNMP Walk - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}")
                 
                 # Marcar ejecución como fallida
                 execution.status = 'FAILED'
-                execution.error_message = friendly_error
+                # Guardar el error TAL CUAL lo devuelve la librería (sin prefijos)
+                execution.error_message = error_real
                 execution.finished_at = timezone.now()
                 execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
                 execution.save()
