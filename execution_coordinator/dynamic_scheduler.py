@@ -178,13 +178,20 @@ class DynamicScheduler:
         # Tomar la de mayor prioridad
         next_task = tasks_in_queue[0]
         
-        # Remover de cola
+        # Remover de cola temporalmente
         redis_client.lrem(self.queue_key, 1, json.dumps(next_task))
         
         # Ejecutar INMEDIATAMENTE
         try:
             job = SnmpJob.objects.get(id=next_task['job_id'])
             job_host = SnmpJobHost.objects.get(id=next_task['job_host_id'])
+            
+            # ✅ NUEVO: Verificar capacidad de Celery ANTES de ejecutar
+            if not self._check_celery_capacity(job.job_type):
+                # Sistema saturado, devolver a la cola
+                redis_client.lpush(self.queue_key, json.dumps(next_task))
+                logger.warning(f"⏸️ Sistema saturado, {job.nombre} regresa a cola")
+                return False
             
             # VERIFICAR: ¿La OLT está en proceso de reintento?
             retry_key = f"olt:retrying:{self.olt_id}"
@@ -366,9 +373,41 @@ class DynamicScheduler:
             else:
                 return 0
     
+    def _check_celery_capacity(self, job_type):
+        """
+        Verifica si hay capacidad en Celery para ejecutar una tarea
+        
+        Args:
+            job_type: 'descubrimiento' o 'get'
+        
+        Returns:
+            bool: True si hay capacidad, False si está saturado
+        """
+        from executions.models import Execution
+        
+        # Límites de capacidad por tipo de tarea
+        CAPACITY_LIMITS = {
+            'descubrimiento': 25,  # Máximo 25 Discovery PENDING
+            'get': 25             # Máximo 25 GET PENDING
+        }
+        
+        limit = CAPACITY_LIMITS.get(job_type, 20)
+        
+        # Contar ejecuciones PENDING del mismo tipo
+        pending_count = Execution.objects.filter(
+            status='PENDING',
+            snmp_job__job_type=job_type
+        ).count()
+        
+        if pending_count >= limit:
+            logger.warning(f"⚠️ Sistema saturado: {pending_count} tareas {job_type} PENDING (límite: {limit})")
+            return False
+        
+        return True
+    
     def _execute_task_now(self, task_info, olt):
         """
-        Ejecuta una tarea INMEDIATAMENTE
+        Ejecuta una tarea INMEDIATAMENTE (si hay capacidad en Celery)
         
         Returns:
             bool: True si se ejecutó correctamente
@@ -379,6 +418,18 @@ class DynamicScheduler:
         try:
             job = SnmpJob.objects.get(id=task_info['job_id'])
             job_host = SnmpJobHost.objects.get(id=task_info['job_host_id'])
+            
+            # ✅ NUEVO: Verificar capacidad de Celery ANTES de crear ejecución
+            if not self._check_celery_capacity(job.job_type):
+                # Sistema saturado, mantener en cola del coordinador
+                coordinator_logger.warning(
+                    f"⏸️ Sistema saturado, manteniendo {task_info['job_name']} en cola interna",
+                    olt=olt,
+                    event_type='CAPACITY_EXCEEDED',
+                    details={'job_type': job.job_type}
+                )
+                # NO eliminar de la cola, se reintentará en el siguiente loop
+                return False
             
             # VERIFICAR: ¿La OLT está en proceso de reintento?
             retry_key = f"olt:retrying:{self.olt_id}"

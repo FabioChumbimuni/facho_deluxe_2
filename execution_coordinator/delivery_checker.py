@@ -97,7 +97,7 @@ def check_pending_deliveries():
                 
                 # Marcar como INTERRUPTED
                 execution.status = 'INTERRUPTED'
-                execution.error_message = f'Tarea perdida: enviada a Celery pero no recogida después de {age}s'
+                execution.error_message = f'Tarea perdida: enviada a Celery pero no recogida después de {age}s (saturación del sistema)'
                 execution.save(update_fields=['status', 'error_message'])
                 
                 stats['lost'] += 1
