@@ -27,16 +27,17 @@ def check_pending_deliveries():
     Verifica que tareas PENDING fueron entregadas a Celery
     
     Revisa:
-    1. Executions PENDING > 30 segundos
+    1. Executions PENDING > 90 segundos (aumentado para evitar falsos positivos)
     2. Con celery_task_id asignado
     3. Valida si la tarea existe en Celery
-    4. Si no existe o está perdida → marca INTERRUPTED y loguea
+    4. Si no existe Y el sistema NO está saturado → marca INTERRUPTED
+    5. Si está saturado → ESPERA (no cancela)
     
     Returns:
         dict: Estadísticas de verificación
     """
     now = timezone.now()
-    threshold = now - timedelta(seconds=30)
+    threshold = now - timedelta(seconds=90)  # Aumentado de 30s a 90s
     
     # Buscar PENDING antiguas con celery_task_id
     pending_execs = Execution.objects.filter(
@@ -86,7 +87,41 @@ def check_pending_deliveries():
             
             # ¿Celery tiene la tarea?
             if execution.celery_task_id not in all_celery_task_ids:
-                # Tarea perdida/huérfana
+                # VERIFICAR: ¿El sistema está saturado?
+                # Si está saturado, es normal que la tarea espere en cola
+                # NO debemos marcarla como INTERRUPTED, debe ESPERAR
+                
+                job_type = execution.snmp_job.job_type
+                pending_same_type = Execution.objects.filter(
+                    status='PENDING',
+                    snmp_job__job_type=job_type
+                ).count()
+                
+                # Límites de saturación
+                SATURATION_THRESHOLD = {
+                    'descubrimiento': 20,
+                    'get': 20
+                }
+                
+                is_saturated = pending_same_type >= SATURATION_THRESHOLD.get(job_type, 15)
+                
+                if is_saturated:
+                    # Sistema saturado, la tarea debe ESPERAR
+                    coordinator_logger.info(
+                        f"⏸️ Tarea esperando: {execution.snmp_job.nombre} en {execution.olt.abreviatura} "
+                        f"(edad:{age}s, {pending_same_type} {job_type} PENDING en sistema)",
+                        olt=execution.olt,
+                        event_type='TASK_WAITING',
+                        details={
+                            'execution_id': execution.id,
+                            'age_seconds': age,
+                            'pending_count': pending_same_type
+                        }
+                    )
+                    # NO marcar como INTERRUPTED, dejar que espere
+                    continue
+                
+                # Sistema NO saturado pero tarea no fue recogida → realmente perdida
                 lost_tasks.append({
                     'execution_id': execution.id,
                     'olt': execution.olt.abreviatura if execution.olt else 'Unknown',
@@ -97,7 +132,7 @@ def check_pending_deliveries():
                 
                 # Marcar como INTERRUPTED
                 execution.status = 'INTERRUPTED'
-                execution.error_message = f'Tarea perdida: enviada a Celery pero no recogida después de {age}s (saturación del sistema)'
+                execution.error_message = f'Tarea perdida: enviada a Celery pero no recogida después de {age}s (sistema NO saturado)'
                 execution.save(update_fields=['status', 'error_message'])
                 
                 stats['lost'] += 1
@@ -110,7 +145,8 @@ def check_pending_deliveries():
                     details={
                         'execution_id': execution.id,
                         'celery_task_id': execution.celery_task_id,
-                        'age_seconds': age
+                        'age_seconds': age,
+                        'pending_count': pending_same_type
                     }
                 )
     

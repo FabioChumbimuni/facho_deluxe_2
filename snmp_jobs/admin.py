@@ -41,7 +41,7 @@ class SnmpJobAdmin(admin.ModelAdmin):
     list_display_links = ('nombre',)
     list_filter = ('marca', 'job_type', 'enabled')
     search_fields = ('nombre', 'descripcion')
-    readonly_fields = ('interval_seconds', 'next_run_at', 'last_run_at')
+    readonly_fields = ('interval_seconds', 'get_job_hosts_info')
     form = SnmpJobForm
     actions = ['deshabilitar_tareas_seleccionadas', 'habilitar_tareas_seleccionadas', 'mostrar_estadisticas_tareas', 'ejecutar_tareas_seleccionadas', 'deshabilitar_tarea_individual']
     
@@ -210,15 +210,19 @@ class SnmpJobAdmin(admin.ModelAdmin):
                                     # Eliminar relaciones existentes
                                     SnmpJobHost.objects.filter(snmp_job=instance).delete()
                                     
-                                    # Crear nuevas relaciones
-                                    bulk_olts = [
-                                        SnmpJobHost(
+                                    # IMPORTANTE: Usar .create() en lugar de bulk_create()
+                                    # para que se dispare el signal post_save que inicializa next_run_at
+                                    for olt in selected_olts:
+                                        SnmpJobHost.objects.create(
                                             snmp_job=instance,
                                             olt=olt,
                                             enabled=True
-                                        ) for olt in selected_olts
-                                    ]
-                                    SnmpJobHost.objects.bulk_create(bulk_olts)
+                                        )
+                                    
+                                    # NOTA: Si algún signal falla, el coordinador auto-repara en ~5 segundos
+                                    # Ver: execution_coordinator/dynamic_scheduler.py::get_ready_tasks()
+                                    
+                                    logger.info(f"✅ {len(selected_olts)} OLTs actualizadas para {instance.nombre}")
                                 except Exception as e:
                                     raise ValidationError(f'Error al guardar OLTs: {str(e)}')
                                 
@@ -241,11 +245,15 @@ class SnmpJobAdmin(admin.ModelAdmin):
                         )
                         
                         # Agregar OLTs usando through model
+                        # IMPORTANTE: Usar .create() individual para disparar signals
                         for olt in form.cleaned_data['olts']:
                             SnmpJobHost.objects.create(
                                 snmp_job=snmp_job,
-                                olt=olt
+                                olt=olt,
+                                enabled=True
                             )
+                        
+                        logger.info(f"✅ Tarea creada con {len(form.cleaned_data['olts'])} OLTs")
                         messages.success(request, f'Tarea SNMP programada: {snmp_job.nombre}')
                     
                     return redirect('admin:snmp_jobs_snmpjob_changelist')
@@ -396,7 +404,7 @@ class SnmpJobAdmin(admin.ModelAdmin):
         ).order_by('next_run_at').first()
         
         if not next_run_obj or not next_run_obj.next_run_at:
-            return "⚫ No programado"
+            return "⚠️ Sin programar"
         
         now = timezone.now()
         if next_run_obj.next_run_at <= now:
@@ -420,6 +428,57 @@ class SnmpJobAdmin(admin.ModelAdmin):
             hours = (total_seconds % 86400) // 3600
             return f"⏰ En {days}d {hours}h"
     get_time_until_next_run.short_description = 'Tiempo Restante'
+    
+    def get_job_hosts_info(self, obj):
+        """
+        Muestra información detallada de próximas ejecuciones por OLT
+        """
+        from django.utils.html import format_html
+        from snmp_jobs.models import SnmpJobHost
+        import pytz
+        
+        job_hosts = SnmpJobHost.objects.filter(
+            snmp_job=obj,
+            enabled=True
+        ).select_related('olt').order_by('next_run_at')
+        
+        if not job_hosts:
+            return format_html('<span style="color: orange;">⚠️ Sin OLTs asociadas</span>')
+        
+        lima_tz = pytz.timezone('America/Lima')
+        html_parts = ['<table style="border-collapse: collapse; width: 100%;">']
+        html_parts.append('<tr style="background-color: #f0f0f0; font-weight: bold;">')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">OLT</th>')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Próxima Ejecución</th>')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Estado</th>')
+        html_parts.append('</tr>')
+        
+        for jh in job_hosts:
+            # Color según estado de la OLT
+            olt_color = 'green' if jh.olt.habilitar_olt else 'gray'
+            olt_icon = '🟢' if jh.olt.habilitar_olt else '⚫'
+            
+            # Próxima ejecución
+            if jh.next_run_at:
+                next_run_lima = jh.next_run_at.astimezone(lima_tz)
+                next_run_str = next_run_lima.strftime('%d/%m/%Y %H:%M:%S')
+                status_color = 'blue'
+                status_icon = '⏰'
+            else:
+                next_run_str = 'Sin programar'
+                status_color = 'red'
+                status_icon = '⚠️'
+            
+            html_parts.append('<tr>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {olt_color};">{olt_icon} {jh.olt.abreviatura}</span></td>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{next_run_str}</span></td>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{status_icon}</span></td>')
+            html_parts.append('</tr>')
+        
+        html_parts.append('</table>')
+        
+        return format_html(''.join(html_parts))
+    get_job_hosts_info.short_description = 'Próximas Ejecuciones por OLT'
 
     # Auto-refresh removido por solicitud del usuario
     def deshabilitar_tareas_seleccionadas(self, request, queryset):

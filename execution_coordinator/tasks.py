@@ -99,7 +99,25 @@ def coordinator_loop_task(self):
             current_hash = coordinator.calculate_state_hash(current_state)
             previous_hash = coordinator.calculate_state_hash(previous_state) if previous_state else None
             
-            # 4. Solo procesar si hay cambios Y hay tareas activas
+            # 4. SCHEDULER DINÁMICO: Procesar tareas listas
+            # CRÍTICO: Se ejecuta SIEMPRE en cada loop (no solo cuando hay cambios)
+            # Esto garantiza:
+            # - Auto-reparación de JobHosts sin next_run_at (cada 5s)
+            # - Ejecución de tareas listas aunque no haya cambios de estado
+            from .dynamic_scheduler import DynamicScheduler
+            
+            scheduler = DynamicScheduler(olt.id)
+            tasks_processed = scheduler.process_ready_tasks(olt)
+            
+            if tasks_processed > 0:
+                coordinator_logger.info(
+                    f"🚀 {tasks_processed} tarea(s) lista(s) procesada(s) en {olt.abreviatura}",
+                    olt=olt,
+                    event_type='EXECUTION_STARTED',
+                    details={'tasks_count': tasks_processed}
+                )
+            
+            # 5. Detectar y manejar cambios de estado si los hay
             has_active_tasks = current_state.get('tasks', [])
             
             if current_hash != previous_hash and has_active_tasks:
@@ -118,20 +136,6 @@ def coordinator_loop_task(self):
                 
                 # Manejar los cambios
                 coordinator.handle_changes(changes_info)
-            
-            # 5. SCHEDULER DINÁMICO: Procesar tareas listas
-            from .dynamic_scheduler import DynamicScheduler
-            
-            scheduler = DynamicScheduler(olt.id)
-            tasks_processed = scheduler.process_ready_tasks(olt)
-            
-            if tasks_processed > 0:
-                coordinator_logger.info(
-                    f"🚀 {tasks_processed} tarea(s) lista(s) procesada(s) en {olt.abreviatura}",
-                    olt=olt,
-                    event_type='EXECUTION_STARTED',
-                    details={'tasks_count': tasks_processed}
-                )
             
             # 6. Guardar estado actual (siempre, para tener timestamp actualizado)
             coordinator.save_state(current_state)

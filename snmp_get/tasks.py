@@ -366,8 +366,38 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                                 'depth': depth
                             })
                         except OnuStatus.DoesNotExist:
-                            logger.error(f"   ❌ OnuStatus no existe para onu_index_id {onu_index_id}")
-                            error_count += 1
+                            logger.warning(f"   ⚠️ OnuStatus no existe para onu_index_id {onu_index_id} - Creando como DISABLED")
+                            
+                            # FALLBACK: Crear OnuStatus si no existe
+                            try:
+                                from discovery.models import OnuIndexMap
+                                onu_index_obj = OnuIndexMap.objects.get(id=onu_index_id)
+                                
+                                OnuStatus.objects.create(
+                                    onu_index=onu_index_obj,
+                                    olt_id=olt_id,
+                                    presence='DISABLED',
+                                    last_state_value=0,
+                                    last_state_label='UNKNOWN',
+                                    consecutive_misses=1,
+                                    last_seen_at=None
+                                )
+                                
+                                # También actualizar inventario
+                                onu_inventory, created = OnuInventory.objects.get_or_create(
+                                    onu_index_id=onu_index_id,
+                                    olt_id=olt_id,
+                                    defaults={'active': False}
+                                )
+                                if not created:
+                                    onu_inventory.active = False
+                                    onu_inventory.save(update_fields=['active', 'updated_at'])
+                                
+                                logger.info(f"   ✅ OnuStatus creado como DISABLED (fallback GET)")
+                                success_count += 1
+                            except Exception as e:
+                                logger.error(f"   ❌ Error creando OnuStatus fallback: {e}")
+                                error_count += 1
                         
                         continue  # No guardar NOSUCHINSTANCE en snmp_description
                     
@@ -377,6 +407,26 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                         olt_id=olt_id,
                         defaults={'active': True}
                     )
+                    
+                    # FALLBACK: Verificar que tenga OnuStatus, si no crearlo como ENABLED
+                    try:
+                        from discovery.models import OnuIndexMap
+                        onu_index_obj = OnuIndexMap.objects.get(id=onu_index_id)
+                        
+                        if not hasattr(onu_index_obj, 'status'):
+                            logger.warning(f"   ⚠️ GET encontró ONU sin OnuStatus: {normalized_id} - Creando como ENABLED")
+                            OnuStatus.objects.create(
+                                onu_index=onu_index_obj,
+                                olt_id=olt_id,
+                                presence='ENABLED',
+                                last_state_value=1,
+                                last_state_label='ACTIVO',
+                                consecutive_misses=0,
+                                last_seen_at=timezone.now()
+                            )
+                            logger.info(f"   ✅ OnuStatus creado como ENABLED (fallback GET)")
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ No se pudo verificar/crear OnuStatus: {e}")
                     
                     # Obtener configuración del campo a actualizar
                     target_field = oid_config.get('target_field', 'snmp_description')

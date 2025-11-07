@@ -315,6 +315,7 @@ class DiscoveryService:
         
         missing_count = 0
         disabled_count = 0
+        created_status_count = 0
         
         for onu_map in existing_maps:
             if onu_map.raw_index_key not in processed_indices:
@@ -346,11 +347,44 @@ class DiscoveryService:
                     missing_count += 1
                     
                 except OnuStatus.DoesNotExist:
-                    # No tiene estado, probablemente es muy antigua
-                    continue
+                    # ONU sin estado (probablemente antigua) - crearla directamente como DISABLED
+                    self.logger.warning(f"⚠️ ONU sin OnuStatus encontrada: {onu_map.normalized_id} - Creando como DISABLED")
+                    
+                    new_status = OnuStatus.objects.create(
+                        onu_index=onu_map,
+                        olt=self.olt,
+                        presence='DISABLED',
+                        last_state_value=0,
+                        last_state_label='UNKNOWN',
+                        consecutive_misses=1,
+                        last_seen_at=None,
+                        last_change_execution=self.execution
+                    )
+                    
+                    created_status_count += 1
+                    disabled_count += 1
+                    self.logger.info(f"🔴 OnuStatus creado como DISABLED: {onu_map.normalized_id}")
+                    
+                    # SINCRONIZAR: También marcar el inventario como inactivo
+                    try:
+                        inventory = OnuInventory.objects.get(onu_index=onu_map)
+                        if inventory.active:
+                            inventory.active = False
+                            inventory.snmp_last_execution = self.execution
+                            inventory.save()
+                            self.logger.info(f"📦 Inventario marcado como inactivo: {onu_map.normalized_id}")
+                    except OnuInventory.DoesNotExist:
+                        # No tiene inventario, no hay problema
+                        pass
+                    
+                    missing_count += 1
         
         if missing_count > 0:
-            self.logger.info(f"👻 ONUs ausentes en walk: {missing_count} (nuevas DISABLED: {disabled_count})")
+            log_msg = f"👻 ONUs ausentes en walk: {missing_count} (nuevas DISABLED: {disabled_count}"
+            if created_status_count > 0:
+                log_msg += f", estados creados: {created_status_count}"
+            log_msg += ")"
+            self.logger.info(log_msg)
 
 
 def execute_discovery_task(execution_id: int) -> Dict:

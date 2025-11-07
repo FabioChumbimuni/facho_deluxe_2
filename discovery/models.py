@@ -182,6 +182,41 @@ class OnuInventory(models.Model):
         if hasattr(self.onu_index, 'status'):
             return self.onu_index.status.presence
         return 'UNKNOWN'
+    
+    def ensure_status_exists(self):
+        """
+        FALLBACK: Garantiza que la ONU tenga OnuStatus
+        Si no existe, lo crea como DISABLED/UNKNOWN
+        
+        Returns:
+            OnuStatus: El estado de la ONU (existente o recién creado)
+        """
+        try:
+            return self.onu_index.status
+        except OnuStatus.DoesNotExist:
+            # No tiene estado, crearlo como DISABLED por seguridad
+            from django.utils import timezone
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            logger.warning(f"⚠️ ONU {self.onu_index.normalized_id} sin OnuStatus - Creando como DISABLED (fallback)")
+            
+            status = OnuStatus.objects.create(
+                onu_index=self.onu_index,
+                olt=self.olt,
+                presence='DISABLED',
+                last_state_value=0,
+                last_state_label='UNKNOWN',
+                consecutive_misses=1,
+                last_seen_at=None
+            )
+            
+            # Sincronizar active con presence
+            if self.active:
+                self.active = False
+                self.save(update_fields=['active', 'updated_at'])
+            
+            return status
 
     class Meta:
         db_table = "onu_inventory"

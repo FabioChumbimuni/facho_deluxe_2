@@ -272,8 +272,8 @@ class OnuInventoryInfoAdmin(admin.ModelAdmin):
     def get_estado(self, obj):
         """Muestra el estado desde OnuStatus (ACTIVO, SUSPENDIDO, etc.)"""
         try:
-            # Obtener OnuStatus relacionado a través de onu_index (related_name='status')
-            onu_status = obj.onu_index.status
+            # FALLBACK: Garantizar que exista OnuStatus
+            onu_status = obj.ensure_status_exists()
             
             if onu_status and onu_status.last_state_label:
                 # Colores según el estado
@@ -286,6 +286,7 @@ class OnuInventoryInfoAdmin(admin.ModelAdmin):
                     'ERROR': 'red',
                     'REGISTERING': 'blue',
                     'MANTENIMIENTO': 'purple',
+                    'UNKNOWN': 'gray',
                 }
                 
                 color = color_map.get(onu_status.last_state_label.upper(), 'gray')
@@ -296,8 +297,9 @@ class OnuInventoryInfoAdmin(admin.ModelAdmin):
                     onu_status.last_state_label
                 )
             return format_html('<span style="color: #999;">-</span>')
-        except Exception:
-            return format_html('<span style="color: #999;">-</span>')
+        except Exception as e:
+            # Si algo falla, mostrar error
+            return format_html('<span style="color: red;">ERROR</span>')
     get_estado.short_description = 'Estado'
     
     def has_add_permission(self, request):

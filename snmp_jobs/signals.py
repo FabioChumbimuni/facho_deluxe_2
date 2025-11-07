@@ -95,13 +95,22 @@ def initialize_new_job_host(sender, instance, created, **kwargs):
     """
     Cuando se crea un SnmpJobHost nuevo, inicializa next_run_at
     
-    Regla TAREA NUEVA: Primera ejecución en 1 minuto
+    GARANTIZA que siempre tenga next_run_at configurado al crearse
+    
+    Reglas:
+    - Si el Job está HABILITADO: Primera ejecución en 1 minuto
+    - Si el Job está DESHABILITADO: Inicializa igual (se ejecutará cuando se habilite)
+    - NUNCA permite que next_run_at quede en None
     """
-    if created and instance.enabled and instance.snmp_job.enabled:
+    if created:
+        # SIEMPRE inicializar next_run_at cuando se crea, sin importar enabled
         if not instance.next_run_at:
             # Para tarea nueva: ejecutar en 1 minuto
             instance.initialize_next_run(is_new=True)
             instance.save(update_fields=['next_run_at'])
             
-            logger.info(f"🆕 SnmpJobHost creado (TAREA NUEVA): {instance.olt.abreviatura} - {instance.snmp_job.nombre} (próxima en 1 min)")
+            if instance.enabled and instance.snmp_job.enabled:
+                logger.info(f"🆕 SnmpJobHost creado (ACTIVO): {instance.olt.abreviatura} - {instance.snmp_job.nombre} (próxima en 1 min)")
+            else:
+                logger.info(f"🆕 SnmpJobHost creado (INACTIVO): {instance.olt.abreviatura} - {instance.snmp_job.nombre} (next_run_at inicializado)")
 

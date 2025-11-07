@@ -269,6 +269,7 @@ class OnuInventorySerializer(serializers.ModelSerializer):
         """
         from snmp_formulas.models import IndexFormula
         from discovery.models import OnuStatus
+        from django.utils import timezone
         
         # Extraer campos de entrada (write-only)
         raw_index_key_input = validated_data.pop('raw_index_key_input', None)
@@ -361,12 +362,13 @@ class OnuInventorySerializer(serializers.ModelSerializer):
             **validated_data
         )
         
-        # 5. Crear OnuStatus si no existe
-        if not hasattr(onu_index, 'status'):
-            # Usar presence_input (puede ser ENABLED o DISABLED según lo especificado)
+        # 5. Crear OnuStatus si no existe (GARANTIZADO)
+        try:
+            # Intentar acceder al status
+            _ = onu_index.status
+        except OnuStatus.DoesNotExist:
+            # No existe, crearlo
             initial_presence = presence_input
-            
-            # Determinar estado según estado_input
             initial_state_label = estado_input  # 'ACTIVO' o 'SUSPENDIDO'
             initial_state_value = 1 if estado_input == 'ACTIVO' else 2
             
@@ -375,7 +377,9 @@ class OnuInventorySerializer(serializers.ModelSerializer):
                 olt=olt,
                 presence=initial_presence,
                 last_state_label=initial_state_label,
-                last_state_value=initial_state_value
+                last_state_value=initial_state_value,
+                consecutive_misses=0,
+                last_seen_at=timezone.now() if initial_presence == 'ENABLED' else None
             )
         
         return onu_inventory

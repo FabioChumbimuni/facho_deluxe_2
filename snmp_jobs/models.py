@@ -669,7 +669,8 @@ class SnmpJobHost(models.Model):
         Inicializa next_run_at cuando se crea o habilita el job_host
         
         Reglas:
-        - Job NUEVO o recién HABILITADO: next_run = now + 1 minuto
+        - Job REALMENTE NUEVO (nunca se ejecutó): next_run = now + 1 minuto
+        - Job EXISTENTE (ya tiene ejecuciones previas): next_run = now + intervalo completo
         - Después de ejecutar: next_run = now + intervalo + DESFASE
         
         DESFASE INTENCIONAL (evita colisiones):
@@ -678,33 +679,36 @@ class SnmpJobHost(models.Model):
         """
         from django.utils import timezone
         from datetime import timedelta
+        from executions.models import Execution
         
         now = timezone.now()
         
-        if is_new or not self.last_run_at:
-            # Primera vez o recién habilitado: ejecutar en 1 minuto CON DESFASE
+        # VERIFICAR: ¿El Job tiene ejecuciones previas?
+        # Si tiene ejecuciones, NO es nuevo aunque se esté recreando el JobHost
+        has_previous_executions = Execution.objects.filter(
+            snmp_job=self.snmp_job,
+            olt=self.olt
+        ).exists()
+        
+        # Determinar el intervalo a usar
+        interval_seconds = self.snmp_job.interval_seconds or 300
+        
+        if is_new and not has_previous_executions:
+            # Job REALMENTE NUEVO (nunca se ejecutó): ejecutar en 1 minuto
             next_time = now + timedelta(minutes=1)
-            
-            # DESFASE INTENCIONAL desde el inicio
-            if self.snmp_job.job_type == 'descubrimiento':
-                # Discovery: segundo 0
-                next_time = next_time.replace(second=0, microsecond=0)
-            elif self.snmp_job.job_type == 'get':
-                # GET: segundo 10
-                next_time = next_time.replace(second=10, microsecond=0)
-            
-            self.next_run_at = next_time
-        else:
-            # Ya se ejecutó antes: respetar intervalo + desfase
-            interval_seconds = self.snmp_job.interval_seconds or 300
+        elif has_previous_executions:
+            # Job EXISTENTE (recreando JobHost): respetar intervalo completo
             next_time = now + timedelta(seconds=interval_seconds)
-            
-            # DESFASE INTENCIONAL según tipo de tarea
-            if self.snmp_job.job_type == 'descubrimiento':
-                # Discovery: alinear al segundo 0
-                next_time = next_time.replace(second=0, microsecond=0)
-            elif self.snmp_job.job_type == 'get':
-                # GET: alinear al segundo 10 (10s después de Discovery)
-                next_time = next_time.replace(second=10, microsecond=0)
-            
-            self.next_run_at = next_time
+        else:
+            # Fallback: usar intervalo completo
+            next_time = now + timedelta(seconds=interval_seconds)
+        
+        # DESFASE INTENCIONAL según tipo de tarea
+        if self.snmp_job.job_type == 'descubrimiento':
+            # Discovery: alinear al segundo 0
+            next_time = next_time.replace(second=0, microsecond=0)
+        elif self.snmp_job.job_type == 'get':
+            # GET: alinear al segundo 10 (10s después de Discovery)
+            next_time = next_time.replace(second=10, microsecond=0)
+        
+        self.next_run_at = next_time

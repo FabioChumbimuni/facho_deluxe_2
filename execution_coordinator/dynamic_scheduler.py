@@ -82,10 +82,36 @@ class DynamicScheduler:
         ORDENADAS POR PRIORIDAD (Discovery primero, GET después)
         
         IMPORTANTE: Usa SnmpJobHost.next_run_at (POR OLT) no SnmpJob.next_run_at (global)
+        
+        INCLUYE AUTO-REPARACIÓN: Si encuentra JobHosts sin next_run_at, los inicializa
         """
         from snmp_jobs.models import SnmpJob, SnmpJobHost
         
         now = timezone.now()
+        
+        # AUTO-REPARACIÓN: Detectar y corregir JobHosts sin next_run_at
+        broken_job_hosts = SnmpJobHost.objects.filter(
+            olt_id=self.olt_id,
+            enabled=True,
+            snmp_job__enabled=True,
+            next_run_at__isnull=True  # ← Sin programar
+        ).select_related('snmp_job')
+        
+        if broken_job_hosts.exists():
+            coordinator_logger.warning(
+                f"🔧 Auto-reparación: {broken_job_hosts.count()} JobHost(s) sin next_run_at en OLT {self.olt_id}",
+                olt=None
+            )
+            
+            for jh in broken_job_hosts:
+                # Inicializar usando el método del modelo
+                jh.initialize_next_run(is_new=True)
+                jh.save(update_fields=['next_run_at'])
+                
+                coordinator_logger.info(
+                    f"✅ Auto-reparado: {jh.snmp_job.nombre} → next_run_at inicializado",
+                    olt=None
+                )
         
         # CAMBIO CRÍTICO: Usar SnmpJobHost.next_run_at en vez de SnmpJob.next_run_at
         # Esto permite que cada OLT tenga su propio horario independiente
