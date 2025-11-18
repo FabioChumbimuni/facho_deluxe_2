@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -10,320 +11,321 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: #0f1419;
             color: #e6e6e6;
             min-height: 100vh;
-            padding: 10px;
+            padding: 12px;
             font-size: 13px;
         }
-        
         .container {
             max-width: 100%;
             margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
-        
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 15px 25px;
-            border-radius: 6px;
-            margin-bottom: 10px;
+            padding: 18px 26px;
+            border-radius: 8px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             color: white;
+            box-shadow: 0 6px 18px rgba(102, 126, 234, 0.25);
         }
-        
         .header h1 {
             font-size: 22px;
+            letter-spacing: 0.4px;
         }
-        
+        .header-info {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
         .header-stats {
             display: flex;
-            gap: 20px;
-            font-size: 12px;
+            gap: 18px;
         }
-        
+        .header-stat {
+            text-align: center;
+        }
         .header-stat .value {
-            font-size: 20px;
-            font-weight: bold;
+            font-size: 24px;
+            font-weight: 700;
         }
-        
         .header-stat .label {
-            font-size: 10px;
+            font-size: 11px;
             text-transform: uppercase;
             opacity: 0.9;
+            letter-spacing: 0.5px;
         }
-        
         .live-clock {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: bold;
             font-family: 'Courier New', monospace;
         }
-        
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+        }
+        .summary-card {
+            background: #16202c;
+            border-radius: 8px;
+            padding: 12px 14px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .summary-card .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #8892a6;
+            letter-spacing: 0.4px;
+        }
+        .summary-card .value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #e6e6e6;
+        }
+        .summary-card .subtext {
+            font-size: 11px;
+            color: #8892a6;
+        }
         .strategy-banner {
-            background: rgba(255, 193, 7, 0.15);
+            background: rgba(255, 193, 7, 0.1);
             border-left: 4px solid #ffc107;
-            padding: 12px 20px;
-            margin-bottom: 10px;
-            border-radius: 4px;
+            padding: 14px 18px;
+            border-radius: 8px;
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            gap: 12px;
         }
-        
-        .strategy-banner .title {
-            font-weight: bold;
+        .strategy-info { flex: 1; }
+        .strategy-title {
+            font-weight: 600;
             color: #ffc107;
-            font-size: 13px;
+            letter-spacing: 0.3px;
         }
-        
-        .strategy-banner .desc {
-            font-size: 11px;
-            color: #ccc;
-            margin-top: 3px;
+        .strategy-desc {
+            font-size: 12px;
+            color: #cfd2da;
+            margin-top: 4px;
         }
-        
-        .strategy-stats {
+        .strategy-features {
+            margin-top: 8px;
             display: flex;
-            gap: 15px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .strategy-feature {
+            background: rgba(255, 255, 255, 0.07);
+            padding: 4px 10px;
+            border-radius: 12px;
             font-size: 11px;
+            color: #ffc107;
         }
-        
-        .strategy-stat {
-            padding: 5px 10px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 3px;
-            text-align: center;
+        .strategy-metrics {
+            min-width: 220px;
+            display: grid;
+            gap: 8px;
         }
-        
-        .strategy-stat .val {
-            font-size: 16px;
-            font-weight: bold;
-            color: #28a745;
+        .metric-card {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            padding: 10px;
         }
-        
+        .metric-card .label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #ffc107;
+            letter-spacing: 0.4px;
+        }
+        .metric-card .value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 12px;
+        }
         .main-table-wrapper {
             background: #16202c;
-            border-radius: 6px;
+            border-radius: 8px;
             overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
         }
-        
         .main-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 12px;
         }
-        
         .main-table thead {
             background: #1e2936;
             position: sticky;
             top: 0;
             z-index: 10;
         }
-        
+        .main-table th,
+        .main-table td {
+            padding: 9px 12px;
+        }
         .main-table th {
-            padding: 10px 12px;
-            text-align: left;
             font-size: 10px;
             text-transform: uppercase;
             color: #8892a6;
-            font-weight: 600;
+            letter-spacing: 0.3px;
             border-bottom: 2px solid #0f1419;
         }
-        
-        .main-table td {
-            padding: 8px 12px;
-            border-bottom: 1px solid #1e2936;
-        }
-        
-        .main-table tbody tr:hover {
-            background: #1e2936;
-        }
-        
-        .main-table tbody tr.olt-row {
+        .main-table tbody tr:hover { background: #1e2936; }
+        .olt-col {
             background: #1a2332;
-            font-weight: bold;
+            border-right: 2px solid #0f1419;
         }
-        
-        .main-table tbody tr.olt-row:hover {
-            background: #1e2936;
-        }
-        
-        .main-table tbody tr.task-row {
-            background: #16202c;
-        }
-        
         .olt-name {
-            font-weight: bold;
-            color: #667eea;
+            font-weight: 700;
+            color: #7b8dff;
             font-size: 13px;
         }
-        
-        .olt-ip {
+        .olt-ip { font-size: 10px; color: #8892a6; }
+        .olt-extra {
+            margin-top: 6px;
             font-size: 10px;
-            color: #8892a6;
+            color: #a3adbe;
+            line-height: 1.4;
         }
-        
-        .task-name {
-            color: #e6e6e6;
-            padding-left: 20px;
-        }
-        
         .badge {
             display: inline-block;
-            padding: 3px 7px;
-            border-radius: 3px;
+            padding: 3px 8px;
+            border-radius: 12px;
             font-size: 9px;
             font-weight: 600;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        
-        .badge.discovery {
-            background: #28a745;
-            color: white;
-        }
-        
-        .badge.get {
-            background: #17a2b8;
-            color: white;
-        }
-        
-        .priority {
-            font-weight: bold;
-            font-size: 11px;
-        }
-        
-        .priority.p90 {
-            color: #dc3545;
-        }
-        
-        .priority.p40 {
-            color: #ffc107;
-        }
-        
-        .time-cell {
-            font-family: 'Courier New', monospace;
-            font-size: 11px;
-        }
-        
-        .time-until {
-            font-weight: 600;
-        }
-        
-        .time-until.ready {
-            color: #dc3545;
-            animation: pulse 1s infinite;
-        }
-        
-        .time-until.soon {
-            color: #ffc107;
-        }
-        
-        .time-until.normal {
-            color: #28a745;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
+        .badge.discovery { background: #28a745; color: white; }
+        .badge.get { background: #17a2b8; color: white; }
+        .priority { font-weight: 700; font-size: 11px; }
+        .priority.p90 { color: #dc3545; }
+        .priority.p40 { color: #ffc107; }
+        .time-until { font-weight: 600; }
+        .time-until.ready { color: #ff7675; animation: pulse 1s infinite; }
+        .time-until.soon { color: #ffc107; }
+        .time-until.normal { color: #28a745; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .quota-bar {
-            width: 80px;
+            width: 90px;
             height: 16px;
             background: #0f1419;
             border-radius: 8px;
-            overflow: hidden;
-            position: relative;
             border: 1px solid #1e2936;
+            overflow: hidden;
         }
-        
         .quota-fill {
             height: 100%;
-            transition: width 0.3s ease;
-            font-size: 9px;
-            color: white;
-            font-weight: bold;
             display: flex;
             align-items: center;
             justify-content: center;
+            font-size: 9px;
+            font-weight: 700;
+            transition: width 0.3s ease;
         }
-        
-        .quota-fill.low {
-            background: #dc3545;
-        }
-        
-        .quota-fill.medium {
-            background: #ffc107;
-        }
-        
-        .quota-fill.high {
-            background: #28a745;
-        }
-        
-        .quota-text {
-            font-size: 10px;
-            color: #8892a6;
-            margin-top: 2px;
-        }
-        
-        .status {
+        .quota-fill.low { background: #dc3545; }
+        .quota-fill.medium { background: #ffc107; color: #000; }
+        .quota-fill.high { background: #28a745; }
+        .quota-text { font-size: 10px; color: #8892a6; margin-top: 2px; }
+        .status-badge {
             display: inline-block;
             padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 9px;
+            border-radius: 4px;
+            font-size: 10px;
             font-weight: 600;
         }
-        
-        .status.SUCCESS {
-            background: #28a745;
-            color: white;
+        .status-badge.SUCCESS { background: #28a745; color: white; }
+        .status-badge.FAILED { background: #dc3545; color: white; }
+        .status-badge.RUNNING { background: #17a2b8; color: white; }
+        .status-badge.PENDING { background: #ffc107; color: #000; }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
-        
-        .status.FAILED {
-            background: #dc3545;
-            color: white;
+        .panel {
+            background: #16202c;
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
         }
-        
-        .status.RUNNING {
-            background: #17a2b8;
-            color: white;
+        .panel h2 {
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: #8892a6;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
         }
-        
-        .status.PENDING {
-            background: #ffc107;
-            color: #000;
+        .queue-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
         }
-        
-        .footer {
-            text-align: center;
-            margin-top: 15px;
+        .queue-table th,
+        .queue-table td {
+            padding: 6px 8px;
+            text-align: left;
+            border-bottom: 1px solid #1f2a38;
+        }
+        .events-list {
+            max-height: 360px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .event-item {
+            background: #1a2332;
+            border-left: 3px solid #667eea;
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .event-header {
+            display: flex;
+            justify-content: space-between;
             font-size: 11px;
             color: #8892a6;
         }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-            font-size: 16px;
+        .event-title { font-weight: 600; color: #e6e6e6; }
+        .event-meta {
+            display: flex;
+            gap: 8px;
+            font-size: 11px;
+            color: #a3adbe;
+            flex-wrap: wrap;
         }
-        
-        .no-data {
-            text-align: center;
-            padding: 40px;
-            color: #8892a6;
-        }
-        
-        .interval-badge {
-            background: rgba(255,255,255,0.1);
+        .event-meta span {
+            background: rgba(255, 255, 255, 0.05);
             padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 10px;
+            border-radius: 12px;
+        }
+        .no-data,
+        .loading { text-align: center; padding: 40px; color: #8892a6; }
+        .footer {
+            text-align: center;
+            font-size: 11px;
             color: #8892a6;
+            margin-top: 4px;
+        }
+        @media (max-width: 1200px) {
+            .main-content { grid-template-columns: 1fr; }
+            .sidebar { flex-direction: row; flex-wrap: wrap; }
+            .panel { flex: 1; min-width: 280px; }
         }
     </style>
 </head>
@@ -352,200 +354,252 @@
                 </div>
             </div>
         </div>
-        
+
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="label">Pendientes</div>
+                <div class="value" id="pending-count">0</div>
+                <div class="subtext">Tareas esperando workers</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">En ejecución</div>
+                <div class="value" id="running-count">0</div>
+                <div class="subtext">Workers procesando en vivo</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Listas para disparar</div>
+                <div class="value" id="ready-count">0</div>
+                <div class="subtext">next_run vencido</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Interrumpidas (1h)</div>
+                <div class="value" id="interrupted-count">0</div>
+                <div class="subtext">Monitor delivery checker</div>
+            </div>
+        </div>
+
         <div class="strategy-banner">
             <div class="strategy-info">
                 <div class="strategy-title">⚙️ Estrategia: Coordinación con Prioridades y Cuotas</div>
                 <div class="strategy-desc">
-                    El coordinator ejecuta tareas secuencialmente por OLT evitando colisiones. 
-                    Discovery (prioridad 90) siempre antes que GET (prioridad 40). 
-                    Cada tarea cumple su cuota de ejecuciones por hora.
+                    El coordinator ejecuta tareas secuencialmente por OLT evitando colisiones. Discovery (P90) siempre antes que GET (P40). Cada ciclo respeta cuotas por hora y monitorea saturación.
+                </div>
+                <div class="strategy-features" id="strategy-features">
+                    <span class="strategy-feature">Una tarea SNMP por OLT</span>
+                    <span class="strategy-feature">Auto-reparación de JobHosts</span>
+                    <span class="strategy-feature">Colisiones &lt; 60s detectadas</span>
                 </div>
             </div>
-            <div class="strategy-stats">
-                <div class="strategy-stat">
-                    <div class="val" id="collision-prevented">0</div>
-                    <div>Colisiones Evitadas</div>
+            <div class="strategy-metrics">
+                <div class="metric-card">
+                    <div class="label">Colisiones detectadas</div>
+                    <div class="value" id="collisions-total">0</div>
                 </div>
-                <div class="strategy-stat">
-                    <div class="val" id="tasks-sequenced">0</div>
-                    <div>Tareas Secuenciadas</div>
+                <div class="metric-card">
+                    <div class="label">Tareas secuenciadas</div>
+                    <div class="value" id="tasks-sequenced">0</div>
                 </div>
             </div>
         </div>
-        
-        <div class="main-table-wrapper">
-            <table class="main-table" id="main-table">
-                <thead>
-                    <tr>
-                        <th style="width: 180px;">OLT</th>
-                        <th style="width: 200px;">Tarea</th>
-                        <th style="width: 80px;">Tipo</th>
-                        <th style="width: 120px;">OID</th>
-                        <th style="width: 80px;">Intervalo</th>
-                        <th style="width: 60px;">Veces/Hora</th>
-                        <th style="width: 40px;">Prior.</th>
-                        <th style="width: 80px;">Próxima</th>
-                        <th style="width: 90px;">Tiempo Rest.</th>
-                        <th style="width: 100px;">Cuota Hora</th>
-                        <th style="width: 120px;">Última Ejec.</th>
-                        <th style="width: 80px;">Duración</th>
-                    </tr>
-                </thead>
-                <tbody id="table-body">
-                    <tr>
-                        <td colspan="12" class="loading">Cargando datos...</td>
-                    </tr>
-                </tbody>
-            </table>
+
+        <div class="main-content">
+            <div class="main-table-wrapper">
+                <table class="main-table" id="main-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 220px;">OLT</th>
+                            <th style="width: 200px;">Tarea</th>
+                            <th style="width: 80px;">Tipo</th>
+                            <th style="width: 120px;">OID</th>
+                            <th style="width: 80px;">Intervalo</th>
+                            <th style="width: 60px;">Veces/Hora</th>
+                            <th style="width: 40px;">Prior.</th>
+                            <th style="width: 90px;">Próxima</th>
+                            <th style="width: 100px;">Tiempo Rest.</th>
+                            <th style="width: 110px;">Cuota Hora</th>
+                            <th style="width: 130px;">Última Ejec.</th>
+                            <th style="width: 80px;">Duración</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                        <tr><td colspan="12" class="loading">Cargando datos...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="sidebar">
+                <div class="panel">
+                    <h2>Cola por tipo de tarea</h2>
+                    <table class="queue-table">
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Pendientes</th>
+                                <th>Ejecutando</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queue-breakdown-body">
+                            <tr><td colspan="3" class="no-data">Sin tareas en cola</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="panel">
+                    <h2>Eventos recientes del coordinator</h2>
+                    <div class="events-list" id="events-list">
+                        <div class="no-data">Sin eventos registrados</div>
+                    </div>
+                </div>
+            </div>
         </div>
-        
+
         <div class="footer">
             Actualización automática cada 3s | Última actualización: <span id="last-update">--:--:--</span>
         </div>
     </div>
-    
+
     <script>
-        // Actualizar reloj en tiempo real cada segundo
         function updateClock() {
             const now = new Date();
             const hours = String(now.getHours()).padStart(2, '0');
             const minutes = String(now.getMinutes()).padStart(2, '0');
             const seconds = String(now.getSeconds()).padStart(2, '0');
-            
             document.getElementById('live-clock').textContent = `${hours}:${minutes}:${seconds}`;
-            
             const day = String(now.getDate()).padStart(2, '0');
             const month = String(now.getMonth() + 1).padStart(2, '0');
             const year = now.getFullYear();
             document.getElementById('current-date').textContent = `${day}/${month}/${year}`;
         }
-        
-        // Actualizar reloj cada segundo
         updateClock();
         setInterval(updateClock, 1000);
-        
+
+        function renderQueueBreakdown(breakdown) {
+            const tbody = document.getElementById('queue-breakdown-body');
+            if (!breakdown.length) {
+                tbody.innerHTML = '<tr><td colspan="3" class="no-data">Sin tareas en cola</td></tr>';
+                return;
+            }
+            tbody.innerHTML = breakdown.map(item => `
+                <tr>
+                    <td>${item.type_display}</td>
+                    <td style="color:#ffc107; font-weight:700;">${item.pending}</td>
+                    <td style="color:#17a2b8; font-weight:700;">${item.running}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderEvents(events) {
+            const container = document.getElementById('events-list');
+            if (!events.length) {
+                container.innerHTML = '<div class="no-data">Sin eventos registrados</div>';
+                return;
+            }
+            container.innerHTML = events.map(event => `
+                <div class="event-item">
+                    <div class="event-header">
+                        <span>${event.time} · ${event.olt}</span>
+                        <span>ID Exec: ${event.execution_id || 'N/A'}</span>
+                    </div>
+                    <div class="event-title">${event.event_type}</div>
+                    <div class="event-meta">
+                        <span>${event.source}</span>
+                        ${event.decision ? `<span>Decisión: ${event.decision}</span>` : ''}
+                        <span>${event.job}</span>
+                    </div>
+                    ${event.reason ? `<div style="font-size:11px; color:#cfd2da;">${event.reason}</div>` : ''}
+                    ${event.details_summary ? `<div style="font-size:10px; color:#8892a6;">${event.details_summary}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
         function updateDashboard() {
             fetch('/coordinator/dashboard/data/')
                 .then(response => response.json())
                 .then(data => {
-                    // Actualizar estadísticas globales
                     document.getElementById('total-olts').textContent = data.stats.total_olts;
                     document.getElementById('total-tasks').textContent = data.stats.total_tasks;
                     document.getElementById('total-exec-hour').textContent = data.stats.total_executions_hour;
-                    
-                    // Actualizar timestamp
+                    document.getElementById('pending-count').textContent = data.stats.pending_executions;
+                    document.getElementById('running-count').textContent = data.stats.running_executions;
+                    document.getElementById('interrupted-count').textContent = data.stats.interrupted_last_hour;
+                    document.getElementById('collisions-total').textContent = data.strategy.metrics.collisions_detected;
+                    document.getElementById('tasks-sequenced').textContent = data.strategy.metrics.tasks_sequenced;
+                    document.getElementById('ready-count').textContent = data.strategy.metrics.ready_to_run;
+
                     const now = new Date();
-                    const updateTime = String(now.getHours()).padStart(2, '0') + ':' + 
-                                      String(now.getMinutes()).padStart(2, '0') + ':' + 
-                                      String(now.getSeconds()).padStart(2, '0');
+                    const updateTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
                     document.getElementById('last-update').textContent = updateTime;
-                    
-                    // Renderizar tabla
+
                     const tbody = document.getElementById('table-body');
-                    
-                    if (data.olts.length === 0) {
+                    if (!data.olts.length) {
                         tbody.innerHTML = '<tr><td colspan="12" class="no-data">No hay OLTs activas</td></tr>';
-                        return;
-                    }
-                    
-                    let html = '';
-                    let totalCollisions = 0;
-                    let totalSequenced = 0;
-                    
-                    data.olts.forEach(olt => {
-                        olt.tasks.forEach((task, index) => {
-                            const isFirstTask = index === 0;
-                            const rowspan = olt.tasks.length;
-                            
-                            // Calcular si hay colisión con otras tareas
-                            const hasCollision = olt.tasks.some((t, i) => 
-                                i !== index && Math.abs(
-                                    new Date(t.next_run).getTime() - new Date(task.next_run).getTime()
-                                ) < 60000 // Menos de 1 minuto de diferencia
-                            );
-                            
-                            if (hasCollision) totalCollisions++;
-                            totalSequenced++;
-                            
-                            html += `<tr class="task-row">`;
-                            
-                            // Columna OLT (solo en primera fila)
-                            if (isFirstTask) {
+                    } else {
+                        let html = '';
+                        data.olts.forEach(olt => {
+                            olt.tasks.forEach((task, index) => {
+                                const isFirst = index === 0;
+                                const rowspan = olt.tasks.length;
+                                html += '<tr>';
+                                if (isFirst) {
+                                    html += `
+                                        <td class="olt-col" rowspan="${rowspan}">
+                                            <div class="olt-name">${olt.name}</div>
+                                            <div class="olt-ip">${olt.ip}</div>
+                                            <div class="olt-extra">
+                                                ${olt.tasks_count} tareas · ${olt.total_executions_hour} exec/h<br>
+                                                Pendientes: ${olt.status_counts.PENDING || 0} · Ejecutando: ${olt.status_counts.RUNNING || 0}<br>
+                                                Listas: ${olt.ready_tasks} · Colisiones: ${olt.collisions}
+                                            </div>
+                                            ${olt.recent_events.length ? `
+                                                <div class="olt-extra" style="margin-top:6px;">
+                                                    Últimos eventos:<br>
+                                                    ${olt.recent_events.map(ev => `<span style="display:block;">${ev.time} · ${ev.event_type}</span>`).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </td>
+                                    `;
+                                }
                                 html += `
-                                    <td rowspan="${rowspan}" style="background: #1a2332; border-right: 2px solid #0f1419;">
-                                        <div class="olt-name">${olt.name}</div>
-                                        <div class="olt-ip">${olt.ip}</div>
-                                        <div style="font-size: 10px; color: #8892a6; margin-top: 3px;">
-                                            ${olt.tasks_count} tareas | ${olt.total_executions_hour} exec/h
+                                    <td><div>${task.name}</div></td>
+                                    <td><span class="badge ${task.type}">${task.type_display}</span></td>
+                                    <td style="font-size:10px; color:#8892a6;">${task.oid}</td>
+                                    <td><span class="badge" style="background:rgba(255,255,255,0.08);">${task.interval_raw}</span></td>
+                                    <td style="text-align:center; font-weight:700; font-size:14px;">${task.executions_per_hour}x</td>
+                                    <td><span class="priority p${task.priority}">P${task.priority}</span></td>
+                                    <td class="time-cell">${task.next_run}</td>
+                                    <td><span class="time-until ${task.time_class}">${task.time_until}</span></td>
+                                    <td>
+                                        <div class="quota-bar">
+                                            <div class="quota-fill ${task.quota.percentage >= 80 ? 'high' : task.quota.percentage >= 50 ? 'medium' : 'low'}" style="width: ${Math.min(task.quota.percentage, 100)}%;">
+                                                ${Math.round(task.quota.percentage)}%
+                                            </div>
                                         </div>
+                                        <div class="quota-text">${task.quota.completed}/${task.quota.required}</div>
+                                    </td>
+                                    <td>
+                                        ${task.last_execution.time ? `
+                                            <div style="font-size:11px; font-family:'Courier New', monospace;">${task.last_execution.time}</div>
+                                            <span class="status-badge ${task.last_execution.status}">${task.last_execution.status}</span>
+                                        ` : '<span style="color:#666; font-size:10px;">Sin datos</span>'}
+                                    </td>
+                                    <td style="font-size:10px; color:#8892a6;">
+                                        ${task.last_execution.duration > 0 ? (task.last_execution.duration / 1000).toFixed(1) + 's' : '-'}
                                     </td>
                                 `;
-                            }
-                            
-                            // Resto de columnas
-                            html += `
-                                <td>
-                                    <div>${task.name}</div>
-                                </td>
-                                <td>
-                                    <span class="badge ${task.type}">${task.type_display}</span>
-                                </td>
-                                <td style="font-size: 10px; color: #8892a6;">${task.oid}</td>
-                                <td>
-                                    <span class="interval-badge">${task.interval_raw}</span>
-                                </td>
-                                <td style="text-align: center; font-weight: bold; font-size: 14px;">
-                                    ${task.executions_per_hour}x
-                                </td>
-                                <td>
-                                    <span class="priority p${task.priority}">P${task.priority}</span>
-                                </td>
-                                <td class="time-cell">${task.next_run}</td>
-                                <td>
-                                    <span class="time-until ${task.time_class}">${task.time_until}</span>
-                                </td>
-                                <td>
-                                    <div class="quota-bar">
-                                        <div class="quota-fill ${
-                                            task.quota.percentage >= 80 ? 'high' : 
-                                            task.quota.percentage >= 50 ? 'medium' : 'low'
-                                        }" style="width: ${task.quota.percentage}%">
-                                            ${Math.round(task.quota.percentage)}%
-                                        </div>
-                                    </div>
-                                    <div class="quota-text">${task.quota.completed}/${task.quota.required}</div>
-                                </td>
-                                <td>
-                                    ${task.last_execution.time ? `
-                                        <div class="time-cell">${task.last_execution.time}</div>
-                                        <span class="status ${task.last_execution.status}">${task.last_execution.status}</span>
-                                    ` : '<span style="color: #666; font-size: 10px;">Sin datos</span>'}
-                                </td>
-                                <td style="font-size: 10px; color: #8892a6;">
-                                    ${task.last_execution.duration > 0 ? 
-                                        (task.last_execution.duration / 1000).toFixed(1) + 's' : 
-                                        '-'
-                                    }
-                                </td>
-                            </tr>`;
+                                html += '</tr>';
+                            });
                         });
-                    });
-                    
-                    tbody.innerHTML = html;
-                    
-                    // Actualizar métricas de estrategia
-                    document.getElementById('collision-prevented').textContent = totalCollisions;
-                    document.getElementById('tasks-sequenced').textContent = totalSequenced;
+                        tbody.innerHTML = html;
+                    }
+
+                    renderQueueBreakdown(data.stats.queue_breakdown);
+                    renderEvents(data.events);
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    document.getElementById('table-body').innerHTML = 
-                        '<tr><td colspan="12" class="no-data">Error al cargar datos</td></tr>';
+                    document.getElementById('table-body').innerHTML = '<tr><td colspan="12" class="no-data">Error al cargar datos</td></tr>';
                 });
         }
-        
-        // Actualizar dashboard cada 3 segundos
+
         updateDashboard();
         setInterval(updateDashboard, 3000);
     </script>

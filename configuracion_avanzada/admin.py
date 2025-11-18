@@ -11,13 +11,18 @@ class ConfiguracionSistemaAdmin(admin.ModelAdmin):
     
     list_display = (
         'nombre', 'get_categoria_display', 'get_tipo_display', 
-        'get_valor_preview', 'activo', 'solo_lectura', 'fecha_modificacion'
+        'get_valor_preview', 'get_modo_prueba_badge', 'activo', 'solo_lectura', 'fecha_modificacion'
     )
-    list_filter = ('categoria', 'tipo', 'activo', 'solo_lectura', 'fecha_creacion')
+    list_filter = ('categoria', 'tipo', 'activo', 'modo_prueba', 'solo_lectura', 'fecha_creacion')
     search_fields = ('nombre', 'descripcion', 'valor')
     readonly_fields = ('fecha_creacion', 'fecha_modificacion', 'modificado_por')
     
     fieldsets = (
+        ('🧪 MODO PRUEBA (IMPORTANTE)', {
+            'fields': ('modo_prueba',),
+            'description': '⚠️ Si está activo, TODAS las ejecuciones SNMP se simulan sin realizar consultas reales. Los tiempos son aleatorios (milisegundos a 3 minutos).',
+            'classes': ('wide',)
+        }),
         ('Información Básica', {
             'fields': ('nombre', 'descripcion', 'categoria')
         }),
@@ -57,6 +62,24 @@ class ConfiguracionSistemaAdmin(admin.ModelAdmin):
         )
     get_valor_preview.short_description = 'Valor'
     get_valor_preview.admin_order_field = 'valor'
+    
+    def get_modo_prueba_badge(self, obj):
+        """Muestra el estado del modo prueba con badge destacado"""
+        if obj.modo_prueba:
+            return format_html(
+                '<span style="background: #dc3545; color: white; padding: 4px 12px; '
+                'border-radius: 12px; font-size: 11px; font-weight: bold;">'
+                '🧪 MODO PRUEBA ACTIVO'
+                '</span>'
+            )
+        return format_html(
+            '<span style="background: #28a745; color: white; padding: 4px 12px; '
+            'border-radius: 12px; font-size: 11px; font-weight: bold;">'
+            '✅ PRODUCCIÓN'
+            '</span>'
+        )
+    get_modo_prueba_badge.short_description = 'Modo'
+    get_modo_prueba_badge.admin_order_field = 'modo_prueba'
 
     def save_model(self, request, obj, form, change):
         """Guardar el usuario que modificó"""

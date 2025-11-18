@@ -367,10 +367,10 @@ SPECTACULAR_SETTINGS = {
 
 # Configuración de CORS (Cross-Origin Resource Sharing)
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',  # React/Next.js
-    'http://localhost:4200',  # Angular
-    'http://localhost:8080',  # Vue.js
+    'http://localhost:3000',  # React/Vite frontend
     'http://127.0.0.1:3000',
+    'http://localhost:4200',  # Angular (opcional)
+    'http://localhost:8080',  # Vue.js (opcional)
     'http://127.0.0.1:4200',
     'http://127.0.0.1:8080',
 ]

@@ -115,10 +115,43 @@ class DynamicScheduler:
         
         # CAMBIO CRÍTICO: Usar SnmpJobHost.next_run_at en vez de SnmpJob.next_run_at
         # Esto permite que cada OLT tenga su propio horario independiente
+        
+        # IMPORTANTE: Solo ejecutar tareas que provienen de workflows vinculados a plantillas activas
+        # Obtener todos los WorkflowNodes activos de esta OLT que están vinculados a plantillas
+        from snmp_jobs.models import WorkflowNode, OLTWorkflow, WorkflowTemplateLink, WorkflowTemplateNode
+        
+        # Obtener workflows de esta OLT que están vinculados a plantillas activas
+        workflows_with_templates = OLTWorkflow.objects.filter(
+            olt_id=self.olt_id,
+            is_active=True
+        ).filter(
+            template_links__template__is_active=True
+        ).distinct()
+        
+        # Obtener los WorkflowNodes de estos workflows que están vinculados a plantillas
+        workflow_nodes = WorkflowNode.objects.filter(
+            workflow__in=workflows_with_templates,
+            enabled=True,
+            template_node__isnull=False  # Solo nodos que vienen de plantillas
+        ).select_related('template_node', 'template_node__oid')
+        
+        # Obtener los OIDs y tipos de operación de estos nodos de plantilla
+        # Un SnmpJob debe tener el mismo OID y tipo de operación para ser considerado válido
+        valid_oid_ids = set()
+        for wn in workflow_nodes:
+            if wn.template_node and wn.template_node.oid:
+                valid_oid_ids.add(wn.template_node.oid.id)
+        
+        # Si no hay OIDs válidos, no hay tareas que ejecutar
+        if not valid_oid_ids:
+            return []
+        
+        # Filtrar job_hosts para SOLO incluir tareas con OIDs de workflows vinculados a plantillas
         job_hosts = SnmpJobHost.objects.filter(
             olt_id=self.olt_id,
             enabled=True,
             snmp_job__enabled=True,
+            snmp_job__oid_id__in=valid_oid_ids,  # ← SOLO tareas con OIDs de plantillas activas
             next_run_at__lte=now,  # ← AHORA USA SnmpJobHost.next_run_at
             next_run_at__isnull=False  # Solo los que tienen next_run_at
         ).select_related('snmp_job', 'snmp_job__oid')
@@ -151,6 +184,27 @@ class DynamicScheduler:
         ready_tasks.sort(key=lambda t: (-t['priority'], t['job_name']))
         
         return ready_tasks
+
+    def _has_discovery_job(self):
+        from snmp_jobs.models import SnmpJobHost
+        return SnmpJobHost.objects.filter(
+            olt_id=self.olt_id,
+            enabled=True,
+            snmp_job__enabled=True,
+            snmp_job__job_type='descubrimiento'
+        ).exists()
+
+    def _has_pending_or_running_discovery(self):
+        from executions.models import Execution
+        statuses = [
+            Execution.STATUS_PENDING,
+            Execution.STATUS_RUNNING,
+        ]
+        return Execution.objects.filter(
+            olt_id=self.olt_id,
+            snmp_job__job_type='descubrimiento',
+            status__in=statuses
+        ).exists()
     
     def enqueue_task(self, task_info):
         """
@@ -444,6 +498,30 @@ class DynamicScheduler:
         try:
             job = SnmpJob.objects.get(id=task_info['job_id'])
             job_host = SnmpJobHost.objects.get(id=task_info['job_host_id'])
+
+            # Si existe una tarea de descubrimiento configurada para esta OLT,
+            # los GET deben esperar hasta que no haya descubrimientos pendientes o en curso.
+            if job.job_type == 'get' and self._has_discovery_job():
+                if self._has_pending_or_running_discovery():
+                    # Devolver a la cola si aún no está en ella
+                    queue_items = redis_client.lrange(self.queue_key, 0, -1)
+                    already_queued = any(
+                        json.loads(item).get('job_id') == task_info['job_id']
+                        for item in queue_items
+                    )
+                    if not already_queued:
+                        self.enqueue_task(task_info)
+                    coordinator_logger.info(
+                        f"⏸️ {job.nombre} espera a que finalice Discovery en {olt.abreviatura}",
+                        olt=olt,
+                        event_type='WAITING',
+                        details={
+                            'reason': 'pending_discovery',
+                            'execution_blocked_job_id': job.id,
+                            'olt_id': self.olt_id,
+                        }
+                    )
+                    return False
             
             # ✅ NUEVO: Verificar capacidad de Celery ANTES de crear ejecución
             if not self._check_celery_capacity(job.job_type):

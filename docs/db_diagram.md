@@ -149,11 +149,13 @@ Table snmp_jobs {
   Note: 'Una tarea SNMP debe tener exactamente un OID y puede tener múltiples OLTs'
 }
 
-Table snmp_job_olts {
+Table snmp_job_hosts {
   id int [pk, increment]
   snmp_job_id int [not null]
   olt_id int [not null]
   enabled boolean [default: true]
+  next_run_at timestamp [note: "Próxima ejecución para ESTA OLT específica"]
+  last_run_at timestamp [note: "Última ejecución para ESTA OLT"]
   last_success_at timestamp
   last_failure_at timestamp
   consecutive_failures int [default: 0]
@@ -161,18 +163,20 @@ Table snmp_job_olts {
   created_at timestamp
 
   indexes {
-    (olt_id, snmp_job_id) [name: 'snmp_job_olts_olt_snmp_job_idx']
-    (snmp_job_id) [name: 'snmp_job_olts_snmp_job_idx']
+    (olt_id, snmp_job_id) [unique, name: 'snmp_job_hosts_olt_snmp_job_idx']
+    (snmp_job_id) [name: 'snmp_job_hosts_snmp_job_idx']
+    (next_run_at) [name: 'snmp_job_hosts_next_run_at_idx']
   }
 
-  Note: 'Relación muchos a muchos entre tareas y OLTs con estado y configuración por OLT'
+  Note: 'Relación muchos a muchos entre tareas y OLTs con estado y configuración por OLT. Gestiona next_run_at POR OLT de forma independiente.'
 }
 
 Table snmp_executions {
   id int [pk, increment]
   snmp_job_id int
-  job_olt_id int
+  job_host_id int [note: "FK a snmp_job_hosts (antes job_olt_id)"]
   olt_id int
+  workflow_node_id int [null, note: "FK a snmp_workflow_nodes - opcional"]
   requested_by int
   celery_task_id varchar(255)
   worker_name varchar(255)
@@ -188,7 +192,168 @@ Table snmp_executions {
 
   indexes {
     (status, created_at) [name: 'snmp_executions_status_created_idx']
+    (workflow_node_id) [name: 'snmp_executions_workflow_node_idx']
   }
+}
+
+// ==================================================================
+// SISTEMA DE WORKFLOWS - FASE 2.5
+// ==================================================================
+
+Table snmp_task_functions {
+  id int [pk, increment]
+  code varchar(80) [unique, not null, note: "Identificador interno (ej. discovery_onu_huawei)"]
+  name varchar(150) [not null]
+  description text
+  module_path varchar(255) [not null, note: "Ruta del módulo Python (ej. snmp_jobs.workers.discovery)"]
+  callable_name varchar(120) [not null, note: "Nombre de la función dentro del módulo"]
+  function_type varchar(20) [default: "get", note: "descubrimiento, get, auxiliar"]
+  default_parameters json [default: "{}"]
+  is_active boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (function_type) [name: 'snmp_task_functions_function_type_idx']
+    (code) [name: 'snmp_task_functions_code_idx']
+  }
+
+  Note: 'Catálogo de funciones ejecutables por el coordinador. Define dónde vive la función Python que implementa la tarea SNMP.'
+}
+
+Table snmp_task_templates {
+  id int [pk, increment]
+  slug varchar(80) [unique, not null, note: "Identificador único (ej. discovery-huawei-onu)"]
+  name varchar(150) [not null]
+  description text
+  function_id int [not null, note: "FK a snmp_task_functions"]
+  default_interval_seconds int [default: 300]
+  default_priority smallint [default: 3, note: "1=Discovery, 2=GET crítico, 3=GET estándar"]
+  default_retry_policy json [default: "{}"]
+  default_run_options json [default: "{}"]
+  default_color varchar(16) [default: "#1f77b4", note: "Color hexadecimal para la UI"]
+  default_icon varchar(8) [note: "Emoji o icono corto"]
+  metadata json [default: "{}"]
+  is_active boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+
+  Note: 'Plantilla configurable que combina una TaskFunction con parámetros, prioridad y estilos para la interfaz tipo Airflow.'
+}
+
+Table snmp_workflow_templates {
+  id int [pk, increment]
+  name varchar(150) [unique, not null, note: "Nombre único de la plantilla"]
+  description text
+  is_active boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+
+  Note: 'Plantilla maestra de workflow que puede aplicarse a múltiples OLTs. Similar a Templates en Zabbix.'
+}
+
+Table snmp_workflow_template_nodes {
+  id int [pk, increment]
+  template_id int [not null, note: "FK a snmp_workflow_templates"]
+  oid_id int [null, note: "FK a oids - OID que define marca, modelo y tipo de operación"]
+  key varchar(150) [not null, note: "Identificador único del nodo (ej: discover.60min, get.description.10min)"]
+  name varchar(150) [not null, note: "Nombre descriptivo del nodo"]
+  interval_seconds int [default: 300]
+  priority smallint [default: 3, note: "1=Discovery, 2=GET crítico, 3=GET estándar"]
+  parameters json [default: "{}"]
+  retry_policy json [default: "{}"]
+  enabled boolean [default: true]
+  position_x decimal(7,2) [default: 0]
+  position_y decimal(7,2) [default: 0]
+  color_override varchar(16)
+  icon_override varchar(8)
+  metadata json [default: "{}"]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (template_id, key) [unique, name: 'snmp_workflow_template_nodes_template_key_idx']
+  }
+
+  Note: 'Nodo dentro de una plantilla de workflow. Cada nodo tiene una key única dentro de la plantilla (como items en Zabbix). Depende directamente de un OID.'
+}
+
+Table snmp_workflow_template_links {
+  id int [pk, increment]
+  template_id int [not null, note: "FK a snmp_workflow_templates"]
+  workflow_id int [not null, note: "FK a snmp_olt_workflows"]
+  auto_sync boolean [default: true, note: "Si True, los cambios en la plantilla se propagan automáticamente"]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (template_id, workflow_id) [unique, name: 'snmp_workflow_template_links_template_workflow_idx']
+  }
+
+  Note: 'Relación ManyToMany entre WorkflowTemplate y OLTWorkflow. Define si un workflow está vinculado a una plantilla y si se sincroniza automáticamente.'
+}
+
+Table snmp_olt_workflows {
+  id int [pk, increment]
+  olt_id int [not null, unique, note: "FK a olt - OneToOne"]
+  name varchar(150) [default: "Workflow SNMP"]
+  description text
+  is_active boolean [default: true]
+  theme varchar(16) [default: "auto", note: "auto, light, dark - Preferencia de tema para la UI"]
+  layout json [default: "{}", note: "Metadata de layout (zoom, pan, configuraciones del canvas)"]
+  created_at timestamp
+  updated_at timestamp
+
+  Note: 'Define el workflow (DAG) de tareas para una OLT específica. Una OLT tiene un solo workflow.'
+}
+
+Table snmp_workflow_nodes {
+  id int [pk, increment]
+  workflow_id int [not null, note: "FK a snmp_olt_workflows"]
+  template_id int [not null, note: "FK a snmp_task_templates"]
+  template_node_id int [null, note: "FK a snmp_workflow_template_nodes - Nodo de plantilla del cual proviene"]
+  key varchar(150) [null, note: "Identificador único del nodo (ej: discover.60min, get.description.10min)"]
+  name varchar(150) [not null, note: "Nombre visible en la UI (editable por OLT)"]
+  interval_seconds int [not null, note: "Intervalo específico para este nodo"]
+  priority smallint [default: 3, note: "1=Discovery, 2=GET crítico, 3=GET estándar"]
+  enabled boolean [default: true]
+  override_interval boolean [default: false, note: "Si True, el intervalo fue sobrescrito manualmente"]
+  override_priority boolean [default: false, note: "Si True, la prioridad fue sobrescrita manualmente"]
+  override_enabled boolean [default: false, note: "Si True, el estado enabled fue sobrescrito manualmente"]
+  override_parameters boolean [default: false, note: "Si True, los parámetros fueron sobrescritos manualmente"]
+  position_x decimal(7,2) [default: 0, note: "Posición X en el canvas Airflow-like"]
+  position_y decimal(7,2) [default: 0, note: "Posición Y en el canvas Airflow-like"]
+  color_override varchar(16)
+  icon_override varchar(8)
+  parameters json [default: "{}"]
+  retry_policy json [default: "{}"]
+  metadata json [default: "{}"]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (workflow_id, key) [unique, name: 'snmp_workflow_nodes_workflow_key_idx']
+    (template_node_id) [name: 'snmp_workflow_nodes_template_node_idx']
+  }
+
+  Note: 'Nodo dentro del workflow de una OLT (equivalente a un operador en Airflow). Puede estar vinculado a un nodo de plantilla o ser custom.'
+}
+
+Table snmp_workflow_edges {
+  id int [pk, increment]
+  workflow_id int [not null, note: "FK a snmp_olt_workflows"]
+  upstream_node_id int [not null, note: "FK a snmp_workflow_nodes - Nodo origen"]
+  downstream_node_id int [not null, note: "FK a snmp_workflow_nodes - Nodo destino"]
+  edge_type varchar(20) [default: "secuencial", note: "secuencial, condicional"]
+  condition json [default: "{}", note: "Condiciones adicionales para ejecución (solo para condicional)"]
+  metadata json [default: "{}"]
+  created_at timestamp
+
+  indexes {
+    (workflow_id, upstream_node_id, downstream_node_id) [unique, name: 'snmp_workflow_edges_workflow_nodes_idx']
+  }
+
+  Note: 'Relación entre nodos (dependencias) dentro de un workflow. Define el orden de ejecución y condiciones.'
 }
 
 // FASE 3 LOGICA WALK Y TABLAS GET
@@ -273,13 +438,28 @@ Ref: index_formulas.modelo_id > olt_models.id
 
 // Relaciones de tareas SNMP
 Ref: snmp_jobs.oid_id > oids.id [delete: restrict] // Una tarea debe tener un OID
-Ref: snmp_job_olts.snmp_job_id > snmp_jobs.id [delete: cascade] // Si se elimina la tarea, se eliminan sus relaciones con OLTs
-Ref: snmp_job_olts.olt_id > olt.id [delete: cascade] // Si se elimina una OLT, se eliminan sus relaciones con tareas
+Ref: snmp_job_hosts.snmp_job_id > snmp_jobs.id [delete: cascade] // Si se elimina la tarea, se eliminan sus relaciones con OLTs
+Ref: snmp_job_hosts.olt_id > olt.id [delete: cascade] // Si se elimina una OLT, se eliminan sus relaciones con tareas
 
 // Relaciones de ejecuciones
 Ref: snmp_executions.snmp_job_id > snmp_jobs.id [delete: set null] // Si se elimina la tarea, mantener el historial
-Ref: snmp_executions.job_olt_id > snmp_job_olts.id [delete: set null] // Si se elimina la relación tarea-OLT, mantener el historial
+Ref: snmp_executions.job_host_id > snmp_job_hosts.id [delete: set null] // Si se elimina la relación tarea-OLT, mantener el historial
 Ref: snmp_executions.olt_id > olt.id [delete: set null] // Si se elimina la OLT, mantener el historial
+Ref: snmp_executions.workflow_node_id > snmp_workflow_nodes.id [delete: set null] // Si se elimina el nodo de workflow, mantener el historial
+
+// Relaciones de workflows
+Ref: snmp_task_templates.function_id > snmp_task_functions.id [delete: protect] // No eliminar función si hay templates
+Ref: snmp_workflow_template_nodes.template_id > snmp_workflow_templates.id [delete: cascade] // Si se elimina plantilla, se eliminan sus nodos
+Ref: snmp_workflow_template_nodes.oid_id > oids.id [delete: protect] // No eliminar OID si está en uso
+Ref: snmp_workflow_template_links.template_id > snmp_workflow_templates.id [delete: cascade] // Si se elimina plantilla, se eliminan los links
+Ref: snmp_workflow_template_links.workflow_id > snmp_olt_workflows.id [delete: cascade] // Si se elimina workflow, se eliminan los links
+Ref: snmp_olt_workflows.olt_id > olt.id [delete: cascade] // Si se elimina OLT, se elimina su workflow
+Ref: snmp_workflow_nodes.workflow_id > snmp_olt_workflows.id [delete: cascade] // Si se elimina workflow, se eliminan sus nodos
+Ref: snmp_workflow_nodes.template_id > snmp_task_templates.id [delete: protect] // No eliminar template si está en uso
+Ref: snmp_workflow_nodes.template_node_id > snmp_workflow_template_nodes.id [delete: set null] // Si se elimina nodo de plantilla, mantener nodo de workflow
+Ref: snmp_workflow_edges.workflow_id > snmp_olt_workflows.id [delete: cascade] // Si se elimina workflow, se eliminan sus edges
+Ref: snmp_workflow_edges.upstream_node_id > snmp_workflow_nodes.id [delete: cascade] // Si se elimina nodo, se eliminan sus edges
+Ref: snmp_workflow_edges.downstream_node_id > snmp_workflow_nodes.id [delete: cascade] // Si se elimina nodo, se eliminan sus edges
 
 // Referencias (asumen que las tablas base ya existen en tu diagrama principal)
 Ref: onu_index_map.olt_id > olt.id

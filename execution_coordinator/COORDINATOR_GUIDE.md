@@ -67,7 +67,6 @@ class ExecutionCoordinator:
         - SnmpJobHost (próxima ejecución por OLT)
         - OLT (activas/inactivas)
         - Redis (locks, colas, reintentos)
-        - QuotaTracker (ejecuciones por hora)
         """
     
     def get_previous_state():
@@ -396,45 +395,24 @@ Cada 5 segundos, `_auto_fix_offset()` revisa todas las OLTs y corrige desviacion
 
 ---
 
-## 📊 Sistema de Cuotas
+## 📊 Telemetría en Vivo
 
 ### Propósito:
-**Informativo** - No bloquea ejecuciones, solo monitorea si se cumple el objetivo.
+Monitorear el estado del scheduler en tiempo real apoyándonos en métricas vivas en lugar de cuotas históricas.
 
-### Modelo: `QuotaTracker`
-```python
-class QuotaTracker:
-    olt = ForeignKey(OLT)
-    snmp_job = ForeignKey(SnmpJob)
-    hour_start = DateTimeField()      # Inicio de la hora
-    expected_count = IntegerField()    # Cuántas debería ejecutar
-    actual_count = IntegerField()      # Cuántas ejecutó realmente
-    status = CharField()               # OK, UNDER, OVER
-```
+### Fuentes clave:
+- `CoordinatorEvent`: registra cada decisión (enqueue, delay, interrupción, auto-reparación).
+- `Execution`: provee el estado actual de cada tarea (PENDING, RUNNING, etc.).
+- Dashboard en `/coordinator/dashboard/`: visualiza filas activas por OLT, colisiones y eventos recientes.
 
-### Cálculo:
-```python
-intervalo = 20 minutos
-execuciones_por_hora = 60 / 20 = 3
-
-# Si solo ejecutó 2:
-status = 'UNDER' (66% de objetivo)
-
-# Si ejecutó 3:
-status = 'OK' (100%)
-
-# Si ejecutó 4:
-status = 'OVER' (133% - puede pasar por catch-up)
-```
-
-### Monitoreo:
-```python
-check_quota_violations_task()
-# Ejecuta cada 5 minutos
-# Solo loguea si hay > 20% desviación
-```
+### Métricas principales:
+- Conteos globales de tareas pendientes/ejecutándose.
+- Tareas listas por OLT y detección de colisiones (< 60s).
+- Últimas ejecuciones por tarea (hora, duración, estado).
 
 ---
+
+
 
 ## 📈 Modelo de Datos
 
@@ -715,8 +693,8 @@ python manage.py shell
 ### Ver cuotas de la última hora
 ```bash
 python manage.py shell
->>> from execution_coordinator.models import QuotaTracker
->>> QuotaTracker.objects.filter(
+>>> from execution_coordinator.models import CoordinatorEvent
+>>> CoordinatorEvent.objects.filter(
 ...     hour_start__gte=timezone.now() - timedelta(hours=1)
 ... ).values('olt__abreviatura', 'snmp_job__nombre', 'status', 'actual_count', 'expected_count')
 ```

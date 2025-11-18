@@ -1,6 +1,7 @@
 """
 Views y ViewSets para la API REST de Facho Deluxe v2
 """
+import logging
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -13,11 +14,14 @@ from datetime import datetime, timedelta
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
+logger = logging.getLogger(__name__)
+
 # Importar modelos
 from hosts.models import OLT
 from brands.models import Brand
 from olt_models.models import OLTModel
-from snmp_jobs.models import SnmpJob
+from snmp_jobs.models import SnmpJob, WorkflowTemplate, WorkflowTemplateNode, OLTWorkflow, WorkflowNode
+from snmp_jobs.services.workflow_template_service import WorkflowTemplateService
 from executions.models import Execution
 from discovery.models import OnuIndexMap, OnuStateLookup, OnuInventory
 from oids.models import OID
@@ -25,6 +29,7 @@ from snmp_formulas.models import IndexFormula
 from odf_management.models import ODF, ODFHilos, ZabbixPortData
 from personal.models import Personal, Area
 from zabbix_config.models import ZabbixConfiguration
+from configuracion_avanzada.models import ConfiguracionSistema
 
 # Importar serializers
 from .serializers import (
@@ -34,7 +39,10 @@ from .serializers import (
     OnuInventorySerializer, OnuInventoryListSerializer,
     OIDSerializer, IndexFormulaSerializer, ODFSerializer, ODFHilosSerializer,
     ZabbixPortDataSerializer, AreaSerializer, PersonalSerializer,
-    ZabbixConfigSerializer, DashboardStatsSerializer
+    ZabbixConfigSerializer, DashboardStatsSerializer,
+    WorkflowTemplateSerializer, WorkflowTemplateNodeSerializer,
+    OLTWorkflowSerializer, WorkflowNodeSerializer,
+    ConfiguracionSistemaSerializer
 )
 
 
@@ -243,11 +251,19 @@ class SNMPJobViewSet(viewsets.ModelViewSet):
 )
 class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet para ejecuciones (solo lectura)"""
-    queryset = Execution.objects.select_related('snmp_job', 'olt').all()
+    queryset = Execution.objects.select_related(
+        'snmp_job', 
+        'olt',
+        'workflow_node',
+        'workflow_node__workflow',
+        'workflow_node__template_node',
+        'workflow_node__template_node__template'
+    ).all()
     serializer_class = ExecutionSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['snmp_job', 'olt', 'status']
+    search_fields = ['snmp_job__nombre', 'olt__abreviatura', 'olt__ip_address', 'error_message', 'workflow_node__name', 'workflow_node__workflow__name']
     ordering_fields = ['started_at', 'finished_at', 'created_at']
     ordering = ['-created_at']
     
@@ -802,4 +818,383 @@ def health_check(request):
         'timestamp': timezone.now().isoformat(),
         'version': '2.0.0',
     })
+
+
+# ============================================================================
+# VIEWSETS DE WORKFLOWS
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="Listar plantillas de workflow"),
+    retrieve=extend_schema(description="Obtener detalles de una plantilla"),
+    create=extend_schema(description="Crear nueva plantilla"),
+    update=extend_schema(description="Actualizar plantilla completa"),
+    partial_update=extend_schema(description="Actualizar plantilla parcialmente"),
+    destroy=extend_schema(description="Eliminar plantilla"),
+)
+class WorkflowTemplateViewSet(viewsets.ModelViewSet):
+    """ViewSet para plantillas de workflow"""
+    queryset = WorkflowTemplate.objects.prefetch_related('template_nodes').all()
+    serializer_class = WorkflowTemplateSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at']
+    ordering = ['name']
+    
+    @extend_schema(
+        description="Obtener nodos de una plantilla",
+        responses={200: WorkflowTemplateNodeSerializer(many=True)}
+    )
+    @action(detail=True, methods=['get'])
+    def nodes(self, request, pk=None):
+        """Obtener nodos de una plantilla"""
+        template = self.get_object()
+        nodes = template.template_nodes.all()
+        serializer = WorkflowTemplateNodeSerializer(nodes, many=True)
+        return Response({'nodes': serializer.data})
+    
+    @extend_schema(
+        description="Aplicar plantilla a múltiples OLTs",
+        request={'application/json': {'type': 'object', 'properties': {'olt_ids': {'type': 'array', 'items': {'type': 'integer'}}}}},
+        responses={200: {'type': 'object', 'properties': {'message': {'type': 'string'}}}}
+    )
+    @action(detail=True, methods=['post'], url_path='apply-to-olts')
+    def apply_to_olts(self, request, pk=None):
+        """Aplicar plantilla a múltiples OLTs"""
+        template = self.get_object()
+        olt_ids = request.data.get('olt_ids', [])
+        
+        if not olt_ids:
+            return Response(
+                {'error': 'Debes proporcionar al menos una OLT'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            stats = WorkflowTemplateService.apply_template_to_olts(template.id, olt_ids)
+            
+            # Construir mensaje detallado
+            message_parts = [
+                f'Plantilla "{template.name}" aplicada a {stats["olts_processed"]} OLT(s)',
+                f'Nodos creados: {stats["nodes_created"]}',
+                f'Nodos vinculados: {stats["nodes_linked"]}',
+            ]
+            
+            if stats.get('nodes_incompatible', 0) > 0:
+                message_parts.append(
+                    f'⚠️ Nodos incompatibles (no aplicados): {stats["nodes_incompatible"]}'
+                )
+            
+            if stats.get('errors'):
+                message_parts.append(f'Errores: {len(stats["errors"])}')
+            
+            return Response({
+                'message': '. '.join(message_parts),
+                'stats': stats
+            })
+        except Exception as e:
+            logger.error(f"Error aplicando plantilla {template.id} a OLTs: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        description="Obtener OLTs asignadas a una plantilla",
+        responses={200: {'type': 'object', 'properties': {'olts': {'type': 'array'}}}}
+    )
+    @action(detail=True, methods=['get'], url_path='assigned-olts')
+    def assigned_olts(self, request, pk=None):
+        """Obtener OLTs asignadas a una plantilla"""
+        template = self.get_object()
+        links = template.workflow_links.select_related('workflow__olt').all()
+        
+        olts_data = []
+        for link in links:
+            olt = link.workflow.olt
+            olts_data.append({
+                'id': olt.id,
+                'abreviatura': olt.abreviatura,
+                'ip_address': olt.ip_address,
+                'marca': olt.marca.nombre if olt.marca else None,
+                'modelo': olt.modelo.nombre if olt.modelo else None,
+                'workflow_id': link.workflow.id,
+                'auto_sync': link.auto_sync,
+                'created_at': link.created_at,
+            })
+        
+        return Response({'olts': olts_data})
+    
+    @extend_schema(
+        description="Agregar OLTs a una plantilla",
+        request={'application/json': {'type': 'object', 'properties': {'olt_ids': {'type': 'array', 'items': {'type': 'integer'}}, 'auto_sync': {'type': 'boolean'}}}},
+        responses={200: {'type': 'object', 'properties': {'message': {'type': 'string'}}}}
+    )
+    @action(detail=True, methods=['post'], url_path='add-olts')
+    def add_olts(self, request, pk=None):
+        """Agregar OLTs a una plantilla"""
+        template = self.get_object()
+        olt_ids = request.data.get('olt_ids', [])
+        auto_sync = request.data.get('auto_sync', True)
+        
+        if not olt_ids:
+            return Response(
+                {'error': 'Debes proporcionar al menos una OLT'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            stats = WorkflowTemplateService.apply_template_to_olts(template.id, olt_ids, auto_sync=auto_sync)
+            
+            return Response({
+                'message': f'Plantilla "{template.name}" aplicada a {stats["olts_processed"]} OLT(s)',
+                'stats': stats
+            })
+        except Exception as e:
+            logger.error(f"Error agregando OLTs a plantilla {template.id}: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        description="Quitar OLTs de una plantilla",
+        request={'application/json': {'type': 'object', 'properties': {'workflow_ids': {'type': 'array', 'items': {'type': 'integer'}}, 'delete_nodes': {'type': 'boolean'}}}},
+        responses={200: {'type': 'object', 'properties': {'message': {'type': 'string'}}}}
+    )
+    @action(detail=True, methods=['post'], url_path='remove-olts')
+    def remove_olts(self, request, pk=None):
+        """Quitar OLTs de una plantilla"""
+        template = self.get_object()
+        workflow_ids = request.data.get('workflow_ids', [])
+        delete_nodes = request.data.get('delete_nodes', False)
+        
+        if not workflow_ids:
+            return Response(
+                {'error': 'Debes proporcionar al menos un workflow'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            total_stats = {
+                'nodes_unlinked': 0,
+                'nodes_deleted': 0,
+                'workflows_unlinked': 0,
+            }
+            
+            for workflow_id in workflow_ids:
+                stats = WorkflowTemplateService.unlink_template_from_workflow(
+                    template.id, workflow_id, delete_nodes=delete_nodes
+                )
+                total_stats['nodes_unlinked'] += stats['nodes_unlinked']
+                total_stats['nodes_deleted'] += stats['nodes_deleted']
+                total_stats['workflows_unlinked'] += 1
+            
+            return Response({
+                'message': f'Plantilla "{template.name}" desvinculada de {total_stats["workflows_unlinked"]} workflow(s)',
+                'stats': total_stats
+            })
+        except Exception as e:
+            logger.error(f"Error quitando OLTs de plantilla {template.id}: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        description="Sincronizar manualmente cambios de plantilla a workflows vinculados",
+        responses={200: {'type': 'object', 'properties': {'message': {'type': 'string'}, 'stats': {'type': 'object'}}}}
+    )
+    @action(detail=True, methods=['post'], url_path='sync-changes')
+    def sync_changes(self, request, pk=None):
+        """Sincronizar manualmente cambios de plantilla a workflows vinculados"""
+        template = self.get_object()
+        
+        try:
+            stats = WorkflowTemplateService.sync_template_changes(template.id)
+            
+            message_parts = [
+                f'Plantilla "{template.name}" sincronizada correctamente',
+                f'Workflows sincronizados: {stats.get("workflows_synced", 0)}',
+                f'Nodos actualizados: {stats.get("nodes_synced", 0)}',
+            ]
+            
+            if stats.get('nodes_not_found', 0) > 0:
+                message_parts.append(f'⚠️ Nodos no encontrados: {stats["nodes_not_found"]}')
+            
+            return Response({
+                'message': '. '.join(message_parts),
+                'stats': stats
+            })
+        except Exception as e:
+            logger.error(f"Error sincronizando cambios de plantilla {template.id}: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """Actualizar plantilla y sincronizar cambios automáticamente"""
+        response = super().update(request, *args, **kwargs)
+        
+        # Sincronizar cambios automáticamente si la actualización fue exitosa
+        if response.status_code == 200:
+            template_id = kwargs.get('pk')
+            try:
+                WorkflowTemplateService.sync_template_changes(template_id)
+                logger.info(f"Plantilla {template_id} actualizada y sincronizada automáticamente")
+            except Exception as e:
+                logger.error(f"Error sincronizando cambios de plantilla {template_id}: {e}", exc_info=True)
+        
+        return response
+
+
+@extend_schema_view(
+    list=extend_schema(description="Listar nodos de plantilla"),
+    retrieve=extend_schema(description="Obtener detalles de un nodo"),
+    create=extend_schema(description="Crear nuevo nodo"),
+    update=extend_schema(description="Actualizar nodo completo"),
+    partial_update=extend_schema(description="Actualizar nodo parcialmente"),
+    destroy=extend_schema(description="Eliminar nodo"),
+)
+class WorkflowTemplateNodeViewSet(viewsets.ModelViewSet):
+    """ViewSet para nodos de plantilla de workflow"""
+    queryset = WorkflowTemplateNode.objects.select_related('template', 'oid').all()
+    serializer_class = WorkflowTemplateNodeSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['template', 'enabled']
+
+
+@extend_schema_view(
+    list=extend_schema(description="Listar workflows de OLT"),
+    retrieve=extend_schema(description="Obtener detalles de un workflow"),
+    create=extend_schema(description="Crear nuevo workflow"),
+    update=extend_schema(description="Actualizar workflow completo"),
+    partial_update=extend_schema(description="Actualizar workflow parcialmente"),
+    destroy=extend_schema(description="Eliminar workflow"),
+)
+class OLTWorkflowViewSet(viewsets.ModelViewSet):
+    """ViewSet para workflows de OLT"""
+    queryset = OLTWorkflow.objects.select_related('olt').prefetch_related('nodes').all()
+    serializer_class = OLTWorkflowSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['olt', 'is_active']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at']
+    ordering = ['-created_at']
+    
+    @extend_schema(
+        description="Obtener nodos de un workflow",
+        responses={200: WorkflowNodeSerializer(many=True)}
+    )
+    @action(detail=True, methods=['get'])
+    def nodes(self, request, pk=None):
+        """Obtener nodos de un workflow"""
+        workflow = self.get_object()
+        nodes = workflow.nodes.all()
+        serializer = WorkflowNodeSerializer(nodes, many=True)
+        return Response({'nodes': serializer.data})
+
+
+@extend_schema_view(
+    list=extend_schema(description="Listar nodos de workflow"),
+    retrieve=extend_schema(description="Obtener detalles de un nodo"),
+    create=extend_schema(description="Crear nuevo nodo"),
+    update=extend_schema(description="Actualizar nodo completo"),
+    partial_update=extend_schema(description="Actualizar nodo parcialmente"),
+    destroy=extend_schema(description="Eliminar nodo"),
+)
+class WorkflowNodeViewSet(viewsets.ModelViewSet):
+    """ViewSet para nodos de workflow"""
+    queryset = WorkflowNode.objects.select_related('workflow', 'template', 'template_node').all()
+    serializer_class = WorkflowNodeSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['workflow', 'enabled']
+    
+    def destroy(self, request, *args, **kwargs):
+        """Eliminar nodo - previene eliminación de nodos vinculados a plantillas"""
+        instance = self.get_object()
+        
+        # Prevenir eliminación de nodos vinculados a plantillas
+        if instance.template_node:
+            from rest_framework.response import Response
+            from rest_framework import status
+            return Response(
+                {
+                    'error': f'No se puede eliminar este nodo porque está vinculado a la plantilla "{instance.template_node.template.name}". '
+                            f'Para eliminar el nodo, debes eliminarlo desde la plantilla correspondiente.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return super().destroy(request, *args, **kwargs)
+
+
+# ============================================================================
+# VIEWSETS DE CONFIGURACIÓN
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="Listar configuraciones del sistema"),
+    retrieve=extend_schema(description="Obtener detalles de una configuración"),
+    create=extend_schema(description="Crear nueva configuración"),
+    update=extend_schema(description="Actualizar configuración completa"),
+    partial_update=extend_schema(description="Actualizar configuración parcialmente"),
+    destroy=extend_schema(description="Eliminar configuración"),
+)
+class ConfiguracionSistemaViewSet(viewsets.ModelViewSet):
+    """ViewSet para configuraciones del sistema"""
+    queryset = ConfiguracionSistema.objects.all()
+    serializer_class = ConfiguracionSistemaSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['nombre', 'descripcion']
+    filterset_fields = ['categoria', 'activo', 'modo_prueba']
+    ordering_fields = ['nombre', 'categoria', 'fecha_modificacion']
+    ordering = ['-fecha_modificacion']
+    
+    @extend_schema(
+        description="Obtener el estado del modo prueba",
+        responses={200: {'type': 'object', 'properties': {'modo_prueba': {'type': 'boolean'}}}}
+    )
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def modo_prueba(self, request):
+        """Obtener el estado del modo prueba"""
+        is_active = ConfiguracionSistema.is_modo_prueba()
+        return Response({'modo_prueba': is_active})
+    
+    @extend_schema(
+        description="Activar o desactivar el modo prueba",
+        request={'type': 'object', 'properties': {'modo_prueba': {'type': 'boolean'}}},
+        responses={200: ConfiguracionSistemaSerializer}
+    )
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def toggle_modo_prueba(self, request):
+        """Activar o desactivar el modo prueba"""
+        modo_prueba = request.data.get('modo_prueba', False)
+        
+        # Obtener o crear configuración para modo prueba
+        config, created = ConfiguracionSistema.objects.get_or_create(
+            nombre='modo_prueba_global',
+            defaults={
+                'descripcion': 'Configuración global del modo prueba. Si está activo, todas las ejecuciones SNMP se simulan.',
+                'tipo': 'boolean',
+                'categoria': 'general',
+                'activo': True,
+                'modo_prueba': modo_prueba
+            }
+        )
+        
+        if not created:
+            config.modo_prueba = modo_prueba
+            config.activo = True
+            config.save()
+        
+        serializer = self.get_serializer(config)
+        return Response(serializer.data)
 

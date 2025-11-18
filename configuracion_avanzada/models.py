@@ -18,6 +18,10 @@ class ConfiguracionSistema(models.Model):
     valor = models.TextField(
         help_text="Valor de la configuración (puede ser texto, número, JSON, etc.)"
     )
+    modo_prueba = models.BooleanField(
+        default=False,
+        help_text="MODO PRUEBA: Si está activo, TODAS las ejecuciones SNMP se simulan sin realizar consultas reales. Los tiempos de ejecución son aleatorios (milisegundos a 3 minutos)."
+    )
     tipo = models.CharField(
         max_length=20,
         choices=[
@@ -110,6 +114,22 @@ class ConfiguracionSistema(models.Model):
             self.valor = json.dumps(valor, ensure_ascii=False)
         else:
             self.valor = str(valor)
+    
+    @staticmethod
+    def is_modo_prueba():
+        """
+        Verifica si el modo prueba está activo globalmente.
+        Busca cualquier configuración activa con modo_prueba=True.
+        
+        Returns:
+            bool: True si el modo prueba está activo, False en caso contrario
+        """
+        try:
+            # Buscar cualquier configuración activa con modo_prueba=True
+            return ConfiguracionSistema.objects.filter(activo=True, modo_prueba=True).exists()
+        except Exception:
+            pass
+        return False
 
 
 class ConfiguracionSNMP(models.Model):
@@ -188,7 +208,7 @@ class ConfiguracionSNMP(models.Model):
         help_text="Segundos entre reintentos (solo para GET)"
     )
     max_consultas_snmp_simultaneas = models.PositiveSmallIntegerField(
-        default=5,
+        default=10,
         validators=[MinValueValidator(1), MaxValueValidator(20)],
         help_text="Máximo de consultas SNMP simultáneas por poller (Semaphore)"
     )

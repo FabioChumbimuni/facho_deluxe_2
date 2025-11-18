@@ -16,6 +16,8 @@ from .views import (
     OnuIndexMapViewSet, OnuStateLookupViewSet, OIDViewSet, IndexFormulaViewSet,
     ODFViewSet, ODFHilosViewSet, ZabbixPortDataViewSet,
     AreaViewSet, PersonalViewSet, ZabbixConfigViewSet,
+    WorkflowTemplateViewSet, WorkflowTemplateNodeViewSet,
+    OLTWorkflowViewSet, WorkflowNodeViewSet, ConfiguracionSistemaViewSet,
     dashboard_stats, health_check
 )
 
@@ -40,6 +42,11 @@ router.register(r'zabbix-ports', ZabbixPortDataViewSet, basename='zabbix-port')
 router.register(r'areas', AreaViewSet, basename='area')
 router.register(r'personal', PersonalViewSet, basename='personal')
 router.register(r'zabbix-config', ZabbixConfigViewSet, basename='zabbix-config')
+router.register(r'workflow-templates', WorkflowTemplateViewSet, basename='workflow-template')
+router.register(r'workflow-template-nodes', WorkflowTemplateNodeViewSet, basename='workflow-template-node')
+router.register(r'olt-workflows', OLTWorkflowViewSet, basename='olt-workflow')
+router.register(r'workflow-nodes', WorkflowNodeViewSet, basename='workflow-node')
+router.register(r'configuracion-sistema', ConfiguracionSistemaViewSet, basename='configuracion-sistema')
 
 # URLs de la API
 urlpatterns = [

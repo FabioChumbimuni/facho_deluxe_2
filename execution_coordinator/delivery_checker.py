@@ -13,13 +13,18 @@ from celery import Celery
 from django.conf import settings
 
 from executions.models import Execution
+from .event_utils import create_execution_event
 from .logger import coordinator_logger
+from redis import Redis
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 # Cliente Celery para inspeccionar tareas
 app = Celery('facho_deluxe_v2')
 app.config_from_object('django.conf:settings', namespace='CELERY')
+
+redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
 
 
 def check_pending_deliveries():
@@ -134,21 +139,90 @@ def check_pending_deliveries():
                 execution.status = 'INTERRUPTED'
                 execution.error_message = f'Tarea perdida: enviada a Celery pero no recogida después de {age}s (sistema NO saturado)'
                 execution.save(update_fields=['status', 'error_message'])
+                interruption_details = {
+                    'execution_id': execution.id,
+                    'celery_task_id': execution.celery_task_id,
+                    'age_seconds': age,
+                    'pending_same_type': pending_same_type,
+                }
+                create_execution_event(
+                    event_type='EXECUTION_INTERRUPTED',
+                    execution=execution,
+                    decision='ABORT',
+                    source='DELIVERY_CHECKER',
+                    reason=execution.error_message,
+                    details=interruption_details,
+                )
                 
                 stats['lost'] += 1
                 
-                coordinator_logger.warning(
-                    f"❌ Tarea perdida detectada: {execution.snmp_job.nombre} en {execution.olt.abreviatura} "
-                    f"(ID:{execution.id}, Celery:{execution.celery_task_id[:8]}, edad:{age}s)",
+                coordinator_logger.log_execution_interrupted(
+                    execution.snmp_job.nombre if execution.snmp_job else 'SNMP Job',
+                    execution.error_message,
                     olt=execution.olt,
-                    event_type='DELIVERY_FAILED',
-                    details={
-                        'execution_id': execution.id,
-                        'celery_task_id': execution.celery_task_id,
-                        'age_seconds': age,
-                        'pending_count': pending_same_type
-                    }
+                    details=interruption_details,
                 )
+
+                job = execution.snmp_job
+                if job and job.job_type == 'descubrimiento':
+                    try:
+                        new_execution = Execution.objects.create(
+                            snmp_job=execution.snmp_job,
+                            job_host=execution.job_host,
+                            olt=execution.olt,
+                            status='PENDING',
+                            attempt=execution.attempt + 1,
+                            requested_by=execution.requested_by,
+                        )
+                        from snmp_jobs.tasks import discovery_main_task
+                        task_result = discovery_main_task.delay(job.id, execution.olt.id, new_execution.id)
+
+                        create_execution_event(
+                            event_type='REQUEUED',
+                            execution=new_execution,
+                            decision='REQUEUE',
+                            source='DELIVERY_CHECKER',
+                            reason='Reencolada tras detectar tarea perdida',
+                            details={
+                                'original_execution': execution.id,
+                                'new_execution': new_execution.id,
+                                'celery_task_id': task_result.id if task_result else None,
+                            }
+                        )
+                        coordinator_logger.info(
+                            f"🔁 Reencolada ejecución {new_execution.id} tras perder {execution.id}",
+                            olt=execution.olt,
+                            event_type='REQUEUED',
+                            details={
+                                'original_execution': execution.id,
+                                'new_execution': new_execution.id,
+                                'attempt': new_execution.attempt,
+                                'celery_task_id': task_result.id if task_result else None,
+                            }
+                        )
+                        retry_key = f"olt:retrying:{execution.olt_id}"
+                        redis_client.set(retry_key, '1', ex=180)
+                    except Exception as requeue_error:
+                        coordinator_logger.error(
+                            f"❌ Error reencolando ejecución después de pérdida: {requeue_error}",
+                            olt=execution.olt,
+                            event_type='EXECUTION_FAILED',
+                            details={'execution_id': execution.id, 'error': str(requeue_error)}
+                        )
+                else:
+                    retry_key = f"olt:retrying:{execution.olt_id}"
+                    redis_client.set(retry_key, '1', ex=360)
+                    coordinator_logger.warning(
+                        f"🛑 OLT {execution.olt.abreviatura if execution.olt else execution.olt_id} bloqueada tras pérdida de GET",
+                        olt=execution.olt,
+                        event_type='EXECUTION_ABORTED',
+                        details={
+                            'execution_id': execution.id,
+                            'snmp_job_id': job.id if job else None,
+                            'reason': 'lost_get_execution',
+                            'retry_key': retry_key
+                        }
+                    )
     
     except Exception as e:
         logger.error(f"Error verificando entregas a Celery: {e}")

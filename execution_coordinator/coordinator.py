@@ -5,7 +5,7 @@ Este módulo implementa el loop continuo que:
 - Lee el estado completo del sistema
 - Detecta cambios en tareas/OLTs
 - Reformula planes dinámicamente
-- Gestiona cuotas y prioridades
+- Gestiona prioridades en tiempo real
 - Previene colisiones entre tareas
 """
 
@@ -18,7 +18,7 @@ from redis import Redis
 from django.conf import settings
 
 from .logger import CoordinatorLogger
-from .models import QuotaTracker, CoordinatorLog
+from .models import CoordinatorLog
 
 # Logger específico del coordinator
 logger = CoordinatorLogger('coordinator_loop')
@@ -115,16 +115,6 @@ class ExecutionCoordinator:
                 except json.JSONDecodeError:
                     pass  # Ignorar items corruptos
             
-            # 6. Quota trackers de la hora actual
-            current_hour = timezone.now().replace(minute=0, second=0, microsecond=0)
-            quota_trackers = list(QuotaTracker.objects.filter(
-                olt_id=self.olt_id,
-                period_start=current_hour
-            ).values(
-                'task_type', 'quota_required', 'quota_completed',
-                'quota_failed', 'quota_pending', 'status'
-            ))
-            
             return {
                 'timestamp': timezone.now().isoformat(),
                 'olt': olt_state,
@@ -132,7 +122,6 @@ class ExecutionCoordinator:
                 'executions': active_executions,
                 'lock': lock_state,
                 'queue': queue_state,
-                'quotas': quota_trackers,
             }
             
         except OLT.DoesNotExist:
@@ -229,7 +218,7 @@ class ExecutionCoordinator:
                         'task_name': curr_task['job_name'],
                         'old_interval': prev_task['interval_seconds'],
                         'new_interval': curr_task['interval_seconds'],
-                        'action_required': 'recalculate_quota'
+                        'action_required': 'log_interval_change'
                     })
             
             # 2. Detectar cambios en OLT
@@ -293,8 +282,8 @@ class ExecutionCoordinator:
                 elif action == 'add_to_plan':
                     self._handle_task_added(change, olt)
                 
-                elif action == 'recalculate_quota':
-                    self._handle_quota_recalculation(change, olt)
+                elif action == 'log_interval_change':
+                    self._log_interval_change(change, olt)
                 
                 elif action == 'abort_all_executions':
                     self._handle_olt_disabled(olt)
@@ -333,7 +322,6 @@ class ExecutionCoordinator:
     def _handle_task_removed(self, change, olt):
         """Maneja cuando una tarea se deshabilita"""
         from executions.models import Execution
-        from snmp_jobs.models import SnmpJob
         
         task_id = change['task_id']
         task_name = change['task_name']
@@ -356,27 +344,17 @@ class ExecutionCoordinator:
         
         # Remover de cola de espera
         self._remove_from_queue(task_id)
-        
-        # Ajustar cuota
-        self._adjust_quota_for_removed_task(task_id, change['task_type'])
     
     def _handle_task_added(self, change, olt):
         """Maneja cuando una tarea se habilita o crea"""
-        from snmp_jobs.models import SnmpJob
-        
         task_id = change['task_id']
         task_name = change['task_name']
         
         logger.log_task_added(task_name, olt=olt, details=change)
-        
-        # Crear QuotaTracker para esta tarea
-        job = SnmpJob.objects.get(id=task_id)
-        self._create_quota_tracker(job, change['task_type'])
     
-    def _handle_quota_recalculation(self, change, olt):
-        """Maneja cuando cambia el intervalo de una tarea"""
+    def _log_interval_change(self, change, olt):
+        """Registra cuando cambia el intervalo de una tarea."""
         logger.log_plan_adjusted(olt, "Intervalo de tarea modificado", details=change)
-        # La lógica de recálculo se implementará después
     
     def _handle_olt_disabled(self, olt):
         """Maneja cuando se deshabilita la OLT"""
@@ -411,40 +389,6 @@ class ExecutionCoordinator:
                     redis_client.lrem(queue_key, 1, item)
             except:
                 continue
-    
-    def _adjust_quota_for_removed_task(self, task_id, task_type):
-        """Ajusta la cuota cuando se remueve una tarea"""
-        current_hour = timezone.now().replace(minute=0, second=0, microsecond=0)
-        
-        tracker = QuotaTracker.objects.filter(
-            olt_id=self.olt_id,
-            task_type=task_type,
-            period_start=current_hour
-        ).first()
-        
-        if tracker:
-            tracker.quota_required = tracker.quota_completed
-            tracker.status = 'ADJUSTED'
-            tracker.save()
-    
-    def _create_quota_tracker(self, job, task_type):
-        """Crea un QuotaTracker para una tarea nueva"""
-        current_hour = timezone.now().replace(minute=0, second=0, microsecond=0)
-        
-        interval_seconds = job.interval_seconds or 3600
-        quota = max(1, 3600 // interval_seconds)
-        
-        QuotaTracker.objects.get_or_create(
-            olt_id=self.olt_id,
-            task_type=task_type,
-            period_start=current_hour,
-            defaults={
-                'period_end': current_hour + timedelta(hours=1),
-                'quota_required': quota,
-                'quota_pending': quota,
-                'status': 'IN_PROGRESS'
-            }
-        )
     
     def save_state(self, state):
         """

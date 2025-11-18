@@ -66,7 +66,7 @@ def coordinator_loop_task(self):
     1. Lee el estado de cada OLT activa
     2. Detecta cambios (tareas habilitadas/deshabilitadas, etc.)
     3. Reformula planes dinámicamente
-    4. Gestiona cuotas y prioridades
+    4. Gestiona prioridades y telemetría
     """
     from hosts.models import OLT
     
@@ -149,6 +149,23 @@ def coordinator_loop_task(self):
             continue
 
 
+@shared_task(queue='coordinator', bind=True)
+def check_quota_violations_task(self):
+    """
+    Tarea legacy mantenida para compatibilidad con configuraciones antiguas.
+    El sistema de cuotas ya no está activo, así que simplemente registramos el llamado.
+    """
+    coordinator_logger.info(
+        "check_quota_violations_task ignorada (sistema de cuotas desactivado)",
+        event_type='STATE_UPDATED',
+        details={'task': 'check_quota_violations_task'}
+    )
+    return {
+        'status': 'skipped',
+        'reason': 'quota system disabled'
+    }
+
+
 @shared_task(queue='cleanup', bind=True)
 def cleanup_old_coordinator_logs_task(self, days_old=7):
     """
@@ -173,86 +190,6 @@ def cleanup_old_coordinator_logs_task(self, days_old=7):
         'status': 'success',
         'deleted_count': deleted_count,
         'cutoff_date': cutoff_date.isoformat()
-    }
-
-
-@shared_task(queue='coordinator', bind=True)
-def check_quota_violations_task(self):
-    """
-    Verifica cuotas y crea reportes de violación si es necesario
-    Se ejecuta cada hora al final del período
-    
-    IMPORTANTE: Solo verifica horas COMPLETAS
-    Si una tarea se habilitó a mitad de hora, esa hora NO se verifica
-    """
-    from .models import QuotaTracker, QuotaViolation
-    from hosts.models import OLT
-    
-    current_hour = timezone.now().replace(minute=0, second=0, microsecond=0)
-    previous_hour = current_hour - timedelta(hours=1)
-    
-    # Buscar trackers del período anterior que no cumplieron cuota
-    # Solo verificar trackers que tuvieron al menos 1 ejecución
-    # (si tiene 0, es porque se habilitó muy tarde en esa hora)
-    incomplete_trackers = QuotaTracker.objects.filter(
-        period_start=previous_hour,
-        status__in=['IN_PROGRESS', 'QUOTA_NOT_MET'],
-        quota_completed__gt=0  # Solo si hubo al menos 1 ejecución
-    ).select_related('olt')
-    
-    for tracker in incomplete_trackers:
-        completion_pct = tracker.completion_percentage()
-        
-        # MENOS ESTRICTO: Solo notificar si está muy por debajo (< 50%)
-        # No generar alertas críticas innecesarias
-        if completion_pct < 50:
-            # Determinar severidad (menos agresiva)
-            if completion_pct < 20:
-                severity = 'HIGH'  # Antes era CRITICAL
-            elif completion_pct < 50:
-                severity = 'MEDIUM'
-            else:
-                severity = 'LOW'
-            
-            # Crear reporte
-            report = {
-                'olt_id': tracker.olt_id,
-                'olt_name': tracker.olt.abreviatura,
-                'task_type': tracker.task_type,
-                'period': f"{tracker.period_start} - {tracker.period_end}",
-                'quota_required': tracker.quota_required,
-                'quota_completed': tracker.quota_completed,
-                'quota_failed': tracker.quota_failed,
-                'quota_skipped': tracker.quota_skipped,
-                'completion_percentage': completion_pct,
-                'severity': severity,
-                'note': 'Solo informativo, no es error crítico'
-            }
-            
-            # Crear violación
-            violation = QuotaViolation.objects.create(
-                olt=tracker.olt,
-                period_start=tracker.period_start,
-                period_end=tracker.period_end,
-                report=report,
-                severity=severity
-            )
-            
-            # Log solo WARNING (no CRITICAL)
-            coordinator_logger.warning(
-                f"📊 Cuota no cumplida: {tracker.task_type} en {tracker.olt.abreviatura} ({completion_pct:.0f}%)",
-                olt=tracker.olt,
-                event_type='QUOTA_WARNING',
-                details=report
-            )
-            
-            # Actualizar estado del tracker
-            tracker.status = 'PARTIAL' if completion_pct > 0 else 'QUOTA_NOT_MET'
-            tracker.save()
-    
-    return {
-        'status': 'success',
-        'violations_created': incomplete_trackers.count()
     }
 
 

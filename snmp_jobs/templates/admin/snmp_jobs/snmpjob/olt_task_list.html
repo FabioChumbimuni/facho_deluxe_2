@@ -1,0 +1,96 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls static %}
+
+{% block content %}
+<div class="card">
+    <h1>{% trans "Tabla de tareas por OLT" %}</h1>
+
+    <form method="get" class="form-inline" style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+        <div>
+            <label for="id_filter_olt">{% trans "OLT" %}</label>
+            <select name="olt" id="id_filter_olt" class="vSelect">
+                <option value="">{% trans "Todas" %}</option>
+                {% for option in olt_choices %}
+                    <option value="{{ option.id }}" {% if option.id|stringformat:"s" == selected_olt %}selected{% endif %}>
+                        {{ option.abreviatura }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="id_filter_type">{% trans "Tipo de tarea" %}</label>
+            <select name="task_type" id="id_filter_type" class="vSelect">
+                <option value="">{% trans "Todos" %}</option>
+                {% for code, label in task_type_choices %}
+                    <option value="{{ code }}" {% if code == selected_task_type %}selected{% endif %}>
+                        {{ label|capfirst }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="id_filter_search">{% trans "Buscar" %}</label>
+            <input type="text" name="search" id="id_filter_search" value="{{ search_query }}" placeholder="OLT o tarea" />
+        </div>
+        <div>
+            <button type="submit" class="button">{% trans "Filtrar" %}</button>
+            <a href="{% url 'admin:snmp_jobs_snmpjob_changelist' %}" class="button" style="margin-left: 6px;">{% trans "Limpiar" %}</a>
+        </div>
+    </form>
+
+    <p style="margin-bottom: 12px;">
+        {% blocktrans %}Mostrando {{ summary_total }} tareas asociadas{% endblocktrans %}
+    </p>
+
+    <table class="result-list">
+        <thead>
+            <tr>
+                <th>{% trans "OLT" %}</th>
+                <th>{% trans "Tarea" %}</th>
+                <th>{% trans "Tipo" %}</th>
+                <th>{% trans "Intervalo (s)" %}</th>
+                <th>{% trans "Próxima ejecución" %}</th>
+                <th>{% trans "Estado" %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if not olt_groups %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 16px;">
+                        {% trans "No hay tareas para los filtros seleccionados." %}
+                    </td>
+                </tr>
+            {% endif %}
+            {% for group in olt_groups %}
+                <tr class="global-olt-row">
+                    <td><strong>{{ group.olt.abreviatura }}</strong></td>
+                    <td colspan="5">{{ group.olt.ip_address }}</td>
+                </tr>
+                {% for task in group.tasks %}
+                    <tr>
+                        <td></td>
+                        <td>{{ task.name }}</td>
+                        <td>{{ task.job_type|capfirst }}</td>
+                        <td>{{ task.interval|default:"—" }}</td>
+                        <td>
+                            {% if task.next_run_at %}
+                                {{ task.next_run_at|date:"Y-m-d H:i" }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if task.enabled %}
+                                <span style="color: #28a745;">● {% trans "Activa" %}</span>
+                            {% else %}
+                                <span style="color: #dc3545;">● {% trans "Inactiva" %}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+

@@ -1,14 +1,18 @@
 # snmp_get/tasks.py
 import logging
-from celery import shared_task
-from django.utils import timezone
-from django.db import transaction
-from django.core.cache import cache
-from easysnmp import Session, EasySNMPTimeoutError, EasySNMPConnectionError
 import time
 import hashlib
 from threading import Semaphore
 from collections import defaultdict
+
+from celery import shared_task
+from django.utils import timezone
+from django.core.cache import cache
+from django.db import transaction
+from easysnmp import Session, EasySNMPTimeoutError, EasySNMPConnectionError
+
+from execution_coordinator.event_utils import create_execution_event
+from execution_coordinator.logger import coordinator_logger
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +107,16 @@ def subdivide_batch(batch, subdivision_size=SUBDIVISION_SIZE):
     return [batch[i:i + subdivision_size] for i in range(0, len(batch), subdivision_size)]
 
 
-@shared_task(queue='get_main', bind=True, time_limit=300, autoretry_for=(Exception,), retry_kwargs={'max_retries': 0})
+@shared_task(
+    queue='get_main',
+    bind=True,
+    time_limit=300,
+    task_acks_late=True,
+    reject_on_worker_lost=True,
+    track_started=True,
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': 0}
+)
 def get_main_task(self, snmp_job_id, olt_id, execution_id):
     """
     Tarea principal GET SNMP.
@@ -235,6 +248,7 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
         depth: Profundidad de subdivisión (0=inicial, 1=subdividido, 2=individual)
     """
     from discovery.models import OnuInventory
+    from executions.models import Execution
     from hosts.models import OLT
     
     # Configuración por defecto del OID
@@ -264,7 +278,7 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
         olt = OLT.objects.get(id=olt_id)
         
         # Obtener límite de semáforo desde configuración
-        max_snmp_queries = snmp_config.get('max_consultas_snmp_simultaneas', 5)
+        max_snmp_queries = snmp_config.get('max_consultas_snmp_simultaneas', 10)
         
         # Obtener o crear semáforo para esta OLT con límite dinámico
         olt_key = f"{olt.ip_address}_{max_snmp_queries}"
@@ -634,6 +648,89 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
             
             logger.info(f"✅ get_poller_task [depth={depth}] completado: {success_count}/{batch_size} exitosos, {error_count} errores")
             
+            completion_info = None
+            task_id = getattr(self.request, 'id', None)
+            if task_id:
+                try:
+                    completion_info = _mark_poller_completion(
+                        execution_id=execution_id,
+                        task_id=task_id,
+                        success_count=success_count,
+                        error_count=error_count,
+                        total_processed=batch_size,
+                    )
+                except Exception as progress_error:
+                    logger.error(f"⚠️ No se pudo actualizar progreso de ejecución {execution_id}: {progress_error}")
+            else:
+                logger.warning(f"⚠️ No se encontró task_id para get_poller_task (execution {execution_id})")
+            
+            if completion_info:
+                try:
+                    execution_obj = Execution.objects.select_related('snmp_job', 'olt').get(pk=execution_id)
+                    job_name = execution_obj.snmp_job.nombre if execution_obj.snmp_job else f"Job {completion_info.get('snmp_job_id')}"
+                    event_type = 'EXECUTION_COMPLETED' if completion_info['status'] == 'SUCCESS' else 'EXECUTION_FAILED'
+                    decision = 'COMPLETE' if completion_info['status'] == 'SUCCESS' else 'ABORT'
+                    reason = None
+                    if completion_info['status'] != 'SUCCESS':
+                        reason = f"{completion_info.get('error_onus', 0)} ONUs con error en pollers"
+                    
+                    summary_details = {
+                        'execution_id': completion_info['execution_id'],
+                        'queue': 'get_main',
+                        'duration_ms': completion_info.get('duration_ms'),
+                        'total_onus': completion_info.get('total_onus'),
+                        'total_batches': completion_info.get('total_batches'),
+                        'success_onus': completion_info.get('success_onus', 0),
+                        'error_onus': completion_info.get('error_onus', 0),
+                        'failed_batches': completion_info.get('failed_batches', 0),
+                    }
+                    
+                    create_execution_event(
+                        event_type=event_type,
+                        execution=execution_obj,
+                        decision=decision,
+                        reason=reason,
+                        details=summary_details,
+                    )
+                    
+                    if completion_info['status'] == 'SUCCESS':
+                        coordinator_logger.log_execution_completed(
+                            job_name,
+                            completion_info.get('duration_ms', 0),
+                            olt=execution_obj.olt,
+                            details=summary_details,
+                        )
+                        try:
+                            from execution_coordinator.callbacks import on_task_completed
+                            on_task_completed(
+                                olt_id=execution_obj.olt_id,
+                                task_name=job_name,
+                                task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
+                                duration_ms=completion_info.get('duration_ms', 0),
+                                status='SUCCESS'
+                            )
+                        except Exception as callback_error:
+                            logger.warning(f"Error en callback coordinator (completed): {callback_error}")
+                    else:
+                        coordinator_logger.log_execution_failed(
+                            job_name,
+                            reason or 'Errores en pollers GET',
+                            olt=execution_obj.olt,
+                            details=summary_details,
+                        )
+                        try:
+                            from execution_coordinator.callbacks import on_task_failed
+                            on_task_failed(
+                                olt_id=execution_obj.olt_id,
+                                task_name=job_name,
+                                task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
+                                error_message=reason or 'Errores en pollers GET'
+                            )
+                        except Exception as callback_error:
+                            logger.warning(f"Error en callback coordinator (failed): {callback_error}")
+                except Exception as finalization_error:
+                    logger.error(f"❌ Error registrando finalización de ejecución {execution_id}: {finalization_error}")
+            
             return {
                 'status': 'completed',
                 'success_count': success_count,
@@ -704,6 +801,78 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         if job.job_type != 'get':
             raise ValueError(f"Esta tarea no es de tipo GET: {job.job_type}")
         
+        # 🧪 MODO PRUEBA GLOBAL: Verificar si el modo prueba está activo
+        from configuracion_avanzada.models import ConfiguracionSistema
+        is_modo_prueba = ConfiguracionSistema.is_modo_prueba()
+        is_test_job = job.nombre.startswith('[PRUEBA]')
+        
+        if is_modo_prueba or is_test_job:
+            logger.info(f"🧪 MODO SIMULACIÓN: {job.nombre} - Simulando ejecución GET sin consultas SNMP reales")
+            
+            # IMPORTANTE: Actualizar estado a RUNNING antes de simular
+            execution.status = 'RUNNING'
+            execution.started_at = timezone.now()
+            execution.attempt = attempt
+            execution.worker_name = queue_name
+            execution.celery_task_id = execute_get_main.__name__
+            execution.save(update_fields=['status', 'started_at', 'attempt', 'worker_name', 'celery_task_id'])
+            
+            import random
+            import time as time_module
+            
+            # Simular tiempo de ejecución (milisegundos a 3 minutos = 0.001 a 180 segundos)
+            simulation_duration = random.uniform(0.001, 180)
+            time_module.sleep(simulation_duration)
+            
+            # Obtener ONUs activas para simular resultados
+            total_onus = OnuStatus.objects.filter(
+                olt_id=olt_id,
+                presence='ENABLED'
+            ).count()
+            
+            # 80% éxito, 15% fallo, 5% interrumpido
+            rand = random.random()
+            if rand < 0.80:
+                execution.status = 'SUCCESS'
+                success_count = random.randint(int(total_onus * 0.7), total_onus) if total_onus > 0 else random.randint(10, 100)
+                error_count = total_onus - success_count if total_onus > 0 else random.randint(0, 10)
+                execution.result_summary = {
+                    'simulated': True,
+                    'total_onus': total_onus,
+                    'success_count': success_count,
+                    'error_count': error_count,
+                    'duration_ms': int(simulation_duration * 1000)
+                }
+                execution.error_message = None
+            elif rand < 0.95:
+                execution.status = 'FAILED'
+                execution.error_message = 'Simulación: Error simulado en tarea GET de prueba'
+                execution.result_summary = {
+                    'simulated': True,
+                    'total_onus': total_onus,
+                    'success_count': 0,
+                    'error_count': total_onus if total_onus > 0 else random.randint(10, 50),
+                    'duration_ms': int(simulation_duration * 1000)
+                }
+            else:
+                execution.status = 'INTERRUPTED'
+                execution.error_message = 'Simulación: Ejecución interrumpida (tarea de prueba)'
+                execution.result_summary = {
+                    'simulated': True,
+                    'interrupted': True,
+                    'duration_ms': int(simulation_duration * 1000)
+                }
+            
+            execution.finished_at = timezone.now()
+            if not execution.started_at:
+                execution.started_at = timezone.now()
+            if execution.started_at and execution.finished_at:
+                execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+            execution.save()
+            
+            logger.info(f"🧪 Simulación GET completada: {execution.status} en {execution.duration_ms}ms")
+            return
+        
         # Validar que el OID sea de tipo 'descripcion'
         if job.oid.espacio != 'descripcion':
             logger.warning(f"⚠️ OID no es de tipo 'descripcion': {job.oid.espacio}")
@@ -740,18 +909,6 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         
         total_onus = len(active_onus)
         logger.info(f"📊 Total de ONUs activas encontradas: {total_onus}")
-        
-        if total_onus == 0:
-            logger.warning(f"⚠️ No hay ONUs activas para consultar en OLT {olt.abreviatura}")
-            execution.status = 'SUCCESS'
-            execution.finished_at = timezone.now()
-            execution.duration_ms = int((time.time() - start_time) * 1000)
-            execution.result_summary = {
-                'total_onus': 0,
-                'message': 'No hay ONUs activas para consultar'
-            }
-            execution.save(update_fields=['status', 'finished_at', 'duration_ms', 'result_summary'])
-            return
         
         # Dividir en lotes para pollers (usar configuración de BD si existe)
         batch_size = job.run_options.get(
@@ -793,7 +950,7 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
                 'tamano_subdivision': SUBDIVISION_SIZE,
                 'max_reintentos_individuales': MAX_INDIVIDUAL_RETRIES,
                 'delay_entre_reintentos': RETRY_DELAY,
-                'max_consultas_snmp_simultaneas': 5,
+                'max_consultas_snmp_simultaneas': 10,
             }
         
         # Extraer configuración del OID para los pollers
@@ -804,6 +961,66 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             'espacio': job.oid.espacio
         }
         logger.info(f"🔧 Configuración OID: Campo='{oid_config['target_field']}', Mantener previo={oid_config['keep_previous_value']}, Formatear MAC={oid_config['format_mac']}")
+        
+        job_host = execution.job_host
+        estimated_batches = (total_onus + batch_size - 1) // batch_size if batch_size else 0
+        start_details = {
+            'execution_id': execution.id,
+            'queue': queue_name,
+            'total_onus_detected': total_onus,
+            'batch_size': batch_size,
+            'estimated_batches': estimated_batches,
+            'timeout': snmp_config.get('timeout'),
+            'retries': snmp_config.get('retries'),
+            'pollers': snmp_config.get('max_pollers_por_olt'),
+            'semaphore_limit': snmp_config.get('max_consultas_snmp_simultaneas'),
+            'attempt': attempt,
+            'job_host_id': job_host.id if job_host else None,
+            'job_next_run_at': job_host.next_run_at.isoformat() if job_host and job_host.next_run_at else None,
+        }
+        create_execution_event(
+            event_type='EXECUTION_STARTED',
+            execution=execution,
+            decision='ENQUEUE',
+            details=start_details,
+        )
+        coordinator_logger.log_execution_started(
+            job.nombre,
+            olt=olt,
+            details=start_details,
+        )
+        
+        if total_onus == 0:
+            logger.warning(f"⚠️ No hay ONUs activas para consultar en OLT {olt.abreviatura}")
+            execution.status = 'SUCCESS'
+            execution.finished_at = timezone.now()
+            execution.duration_ms = int((time.time() - start_time) * 1000)
+            execution.result_summary = {
+                'total_onus': 0,
+                'message': 'No hay ONUs activas para consultar'
+            }
+            execution.save(update_fields=['status', 'finished_at', 'duration_ms', 'result_summary'])
+            completion_details = {
+                'execution_id': execution.id,
+                'queue': queue_name,
+                'total_onus': 0,
+                'duration_ms': execution.duration_ms,
+                'attempt': attempt,
+                'message': 'No hay ONUs activas para consultar'
+            }
+            create_execution_event(
+                event_type='EXECUTION_COMPLETED',
+                execution=execution,
+                decision='COMPLETE',
+                details=completion_details,
+            )
+            coordinator_logger.log_execution_completed(
+                job.nombre,
+                execution.duration_ms,
+                olt=olt,
+                details=completion_details,
+            )
+            return
         
         # Encolar tareas poller
         poller_tasks = []
@@ -829,35 +1046,26 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         execution.result_summary = {
             'total_onus': total_onus,
             'total_batches': total_batches,
+            'completed_batches': 0,
+            'pending_batches': total_batches,
             'batch_size': batch_size,
             'poller_tasks': poller_tasks,
+            'success_onus': 0,
+            'error_onus': 0,
+            'failed_batches': 0,
             'oid': job.oid.oid,
             'oid_name': job.oid.nombre
         }
-        execution.save(update_fields=['result_summary'])
+        execution.status = 'RUNNING'
+        if not execution.started_at:
+            execution.started_at = timezone.now()
+        execution.finished_at = None
+        execution.duration_ms = None
+        execution.save(update_fields=['result_summary', 'status', 'started_at', 'finished_at', 'duration_ms'])
         
         logger.info(f"✅ Pollers encolados exitosamente. Total: {total_batches} lotes")
         
-        # Marcar como SUCCESS (los pollers se encargan de actualizar las ONUs)
-        execution.status = 'SUCCESS'
-        execution.finished_at = timezone.now()
-        execution.duration_ms = int((time.time() - start_time) * 1000)
-        execution.save(update_fields=['status', 'finished_at', 'duration_ms'])
-        
-        logger.info(f"✅ execute_get_main completado en {execution.duration_ms}ms")
-        
-        # CALLBACK AL COORDINATOR: Notificar que GET terminó exitosamente
-        try:
-            from execution_coordinator.callbacks import on_task_completed
-            on_task_completed(
-                olt_id=olt.id,
-                task_name=job.nombre,
-                task_type=job.job_type,
-                duration_ms=execution.duration_ms,
-                status='SUCCESS'
-            )
-        except Exception as callback_error:
-            logger.warning(f"Error en callback coordinator: {callback_error}")
+        logger.info("⌛ Ejecución continuará hasta que finalicen todos los pollers asociados")
         
     except Exception as e:
         logger.error(f"❌ Error en execute_get_main: {str(e)}")
@@ -869,6 +1077,26 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             execution.duration_ms = int((time.time() - start_time) * 1000)
             execution.error_message = str(e)
             execution.save(update_fields=['status', 'finished_at', 'duration_ms', 'error_message'])
+            error_details = {
+                'execution_id': execution.id,
+                'queue': queue_name,
+                'duration_ms': execution.duration_ms,
+                'attempt': attempt,
+                'error': str(e),
+            }
+            create_execution_event(
+                event_type='EXECUTION_FAILED',
+                execution=execution,
+                decision='ABORT',
+                reason=str(e),
+                details=error_details,
+            )
+            coordinator_logger.log_execution_failed(
+                job.nombre if 'job' in locals() else f'Job {snmp_job_id}',
+                str(e),
+                olt=execution.olt if execution and execution.olt_id else None,
+                details=error_details,
+            )
         except Exception as save_error:
             logger.error(f"❌ Error guardando estado de ejecución: {save_error}")
         
@@ -896,3 +1124,77 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         
         raise
 
+
+def _mark_poller_completion(execution_id, task_id, success_count, error_count, total_processed):
+    """
+    Actualiza la ejecución asociada a un poller y determina si la ejecución global finalizó.
+    
+    Returns:
+        dict | None: Información para logging/eventos cuando la ejecución termina.
+    """
+    from executions.models import Execution
+    
+    completion_payload = None
+    
+    with transaction.atomic():
+        execution = Execution.objects.select_for_update().get(pk=execution_id)
+        summary = execution.result_summary or {}
+        total_batches = summary.get('total_batches', 0) or 0
+        
+        poller_tasks = summary.get('poller_tasks', [])
+        now = timezone.now()
+        
+        for task_info in poller_tasks:
+            if task_info.get('task_id') == task_id:
+                task_info['completed'] = True
+                task_info['completed_at'] = now.isoformat()
+                task_info['success_count'] = success_count
+                task_info['error_count'] = error_count
+                task_info['total_processed'] = total_processed
+                break
+        
+        summary['success_onus'] = summary.get('success_onus', 0) + success_count
+        summary['error_onus'] = summary.get('error_onus', 0) + error_count
+        summary['failed_batches'] = summary.get('failed_batches', 0)
+        if error_count > 0:
+            summary['failed_batches'] += 1
+        
+        completed_batches = summary.get('completed_batches', 0) + 1
+        summary['completed_batches'] = completed_batches
+        summary['pending_batches'] = max(total_batches - completed_batches, 0)
+        
+        execution.result_summary = summary
+        updates = ['result_summary']
+        
+        has_errors = summary.get('error_onus', 0) > 0
+        execution_completed = (total_batches == 0) or (completed_batches >= total_batches)
+        
+        if execution_completed:
+            final_status = 'FAILED' if has_errors else 'SUCCESS'
+            if execution.status != final_status:
+                execution.status = final_status
+                updates.append('status')
+            if not execution.started_at:
+                execution.started_at = now
+                updates.append('started_at')
+            execution.finished_at = now
+            execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+            updates.extend(['finished_at', 'duration_ms'])
+            
+            completion_payload = {
+                'status': final_status,
+                'execution_id': execution.id,
+                'snmp_job_id': execution.snmp_job_id,
+                'olt_id': execution.olt_id,
+                'duration_ms': execution.duration_ms,
+                'total_onus': summary.get('total_onus'),
+                'total_batches': total_batches,
+                'success_onus': summary.get('success_onus', 0),
+                'error_onus': summary.get('error_onus', 0),
+                'failed_batches': summary.get('failed_batches', 0),
+                'poller_tasks': poller_tasks,
+            }
+        
+        execution.save(update_fields=updates)
+    
+    return completion_payload

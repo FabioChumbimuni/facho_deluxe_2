@@ -134,6 +134,11 @@ class CoordinatorLogger:
         msg = f"❌ Ejecución fallida: {task_name} - Error: {error}"
         self.error(msg, olt=olt, event_type='EXECUTION_FAILED', details=details)
     
+    def log_execution_interrupted(self, task_name, reason, olt=None, details=None):
+        """Log cuando una ejecución es interrumpida o perdida"""
+        msg = f"⏸️ Ejecución interrumpida: {task_name} - Razón: {reason}"
+        self.warning(msg, olt=olt, event_type='EXECUTION_INTERRUPTED', details=details)
+    
     def log_execution_aborted(self, task_name, reason, olt=None, details=None):
         """Log cuando se aborta una ejecución"""
         msg = f"🛑 Ejecución abortada: {task_name} - Razón: {reason}"

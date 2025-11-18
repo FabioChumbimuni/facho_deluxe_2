@@ -1,60 +1,10 @@
 # Diagrama de Base de Datos - Facho Deluxe v2
 
-## Actualizado: 2025-10-21
+## Actualizado: 2025-11-08
 
 ## 📊 Nuevas Tablas del Sistema de Coordinación
 
 ### execution_coordinator App
-
-#### **quota_tracker**
-Rastrea el cumplimiento de cuotas por OLT y tipo de tarea.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | BigInt | PK |
-| olt_id | ForeignKey | Referencia a hosts.OLT |
-| task_type | CharField(50) | Tipo: 'discovery', 'get_descripcion', etc. |
-| period_start | DateTime | Inicio del período (hora) |
-| period_end | DateTime | Fin del período |
-| quota_required | Integer | Ejecuciones requeridas en el período |
-| quota_completed | Integer | Ejecuciones completadas |
-| quota_failed | Integer | Ejecuciones fallidas |
-| quota_skipped | Integer | Ejecuciones omitidas |
-| quota_pending | Integer | Ejecuciones pendientes |
-| total_duration_ms | BigInteger | Tiempo total consumido (ms) |
-| avg_duration_ms | Integer | Duración promedio (ms) |
-| status | CharField(20) | IN_PROGRESS, COMPLETED, PARTIAL, FAILED, etc. |
-| created_at | DateTime | Fecha creación |
-| updated_at | DateTime | Fecha actualización |
-
-**Índices:**
-- (olt_id, period_start)
-- status
-- UNIQUE (olt_id, task_type, period_start)
-
----
-
-#### **quota_violations**
-Registro de violaciones de cuota.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | BigInt | PK |
-| olt_id | ForeignKey | Referencia a hosts.OLT |
-| period_start | DateTime | Inicio del período |
-| period_end | DateTime | Fin del período |
-| report | JSON | Reporte completo de la violación |
-| severity | CharField(20) | LOW, MEDIUM, HIGH, CRITICAL |
-| notified | Boolean | Si se notificó |
-| notified_at | DateTime | Cuándo se notificó |
-| created_at | DateTime | Fecha creación |
-
-**Índices:**
-- (olt_id, created_at)
-- severity
-- notified
-
----
 
 #### **coordinator_logs**
 Log detallado de todas las acciones del coordinator.
@@ -76,26 +26,29 @@ Log detallado de todas las acciones del coordinator.
 
 ---
 
-#### **execution_plans**
-Planes de ejecución generados por el coordinator.
+#### **coordinator_events**
+Registro estructurado de decisiones y acciones coordinadas.
 
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
 | id | BigInt | PK |
-| olt_id | ForeignKey | Referencia a hosts.OLT |
-| period_start | DateTime | Inicio del período |
-| period_end | DateTime | Fin del período |
-| plan_data | JSON | Plan completo (lista de tareas con timing) |
-| status | CharField(20) | ACTIVE, COMPLETED, SUPERSEDED, ABORTED |
-| total_tasks | Integer | Total de tareas en el plan |
-| completed_tasks | Integer | Tareas completadas |
-| failed_tasks | Integer | Tareas fallidas |
-| created_at | DateTime | Fecha creación |
-| updated_at | DateTime | Fecha actualización |
+| execution_id | ForeignKey | Referencia a executions.Execution (nullable) |
+| snmp_job_id | ForeignKey | Referencia a snmp_jobs.SnmpJob (nullable) |
+| job_host_id | ForeignKey | Referencia a snmp_jobs.SnmpJobHost (nullable) |
+| olt_id | ForeignKey | Referencia a hosts.OLT (nullable) |
+| event_type | CharField(40) | ENQUEUED, REQUEUED, AUTO_REPAIR, etc. |
+| decision | CharField(20) | ENQUEUE, REQUEUE, WAIT, SKIP, etc. |
+| source | CharField(30) | SCHEDULER, DELIVERY_CHECKER, AUTO_REPAIR, ADMIN, etc. |
+| reason | Text | Motivo resumido (nullable) |
+| details | JSON | Contexto adicional (nullable) |
+| created_at | DateTime | Fecha/hora del evento |
 
 **Índices:**
-- (olt_id, period_start)
-- status
+- created_at
+- event_type
+- decision
+- source
+- (olt_id, created_at)
 
 ---
 
@@ -176,7 +129,7 @@ Execution Coordinator (Gestor de Ejecuciones)
 - ✅ **Sin catch-up**: Tareas habilitadas empiezan en 1 minuto (no ejecutan pasadas)
 - ✅ **Por OLT independiente**: Cada OLT tiene su propio horario
 - ✅ **Ejecución eficiente**: Siguiente tarea ejecuta inmediatamente al terminar anterior
-- ✅ **Respeto de intervalos**: Cada tarea cumple su cuota (ej: 5 min = 12 exec/hora)
+- ✅ **Respeto de intervalos**: Cada tarea reprograma su siguiente ejecución según su intervalo
 - ✅ **Sin colisiones**: Solo 1 tarea SNMP pesada por OLT a la vez
 - ✅ **Priorización**: Discovery siempre antes que GET
 

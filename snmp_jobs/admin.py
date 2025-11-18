@@ -12,11 +12,20 @@ from django.core.exceptions import ValidationError
 from django.contrib.admin.widgets import FilteredSelectMultiple
 import json
 import logging
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 from .models import (
     SnmpJob,
     SnmpJobHost,
+    TaskFunction,
+    TaskTemplate,
+    OLTWorkflow,
+    WorkflowNode,
+    WorkflowEdge,
+    WorkflowTemplate,
+    WorkflowTemplateNode,
+    WorkflowTemplateLink,
 )
 from .forms import SnmpJobForm
 from brands.models import Brand
@@ -27,7 +36,7 @@ from oids.models import OID
 class SnmpJobAdmin(admin.ModelAdmin):
     """Admin para programar tareas SNMP"""
     
-    change_list_template = 'admin/snmp_jobs/change_list.html'
+    change_list_template = 'admin/snmp_jobs/snmpjob/olt_task_list.html'
     
     def add_view(self, request, form_url='', extra_context=None):
         """Redirigir la vista de creación a programar_tarea"""
@@ -45,6 +54,67 @@ class SnmpJobAdmin(admin.ModelAdmin):
     form = SnmpJobForm
     actions = ['deshabilitar_tareas_seleccionadas', 'habilitar_tareas_seleccionadas', 'mostrar_estadisticas_tareas', 'ejecutar_tareas_seleccionadas', 'deshabilitar_tarea_individual']
     
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context.update(self._build_olt_task_context(request))
+        return super().changelist_view(request, extra_context=extra_context)
+
+    def _build_olt_task_context(self, request):
+        """Construye el contexto para la tabla OLT ↔ tareas."""
+        olt_filter = request.GET.get('olt') or ''
+        type_filter = request.GET.get('task_type') or ''
+        search_query = (request.GET.get('search') or '').strip().lower()
+
+        job_hosts = SnmpJobHost.objects.select_related('snmp_job', 'olt')
+
+        if olt_filter:
+            job_hosts = job_hosts.filter(olt_id=olt_filter)
+        if type_filter:
+            job_hosts = job_hosts.filter(snmp_job__job_type=type_filter)
+
+        if search_query:
+            job_hosts = job_hosts.filter(
+                models.Q(snmp_job__nombre__icontains=search_query) |
+                models.Q(olt__abreviatura__icontains=search_query)
+            )
+
+        job_hosts = job_hosts.order_by('olt__abreviatura', 'snmp_job__nombre')
+
+        grouped = defaultdict(list)
+        for link in job_hosts:
+            grouped[link.olt].append(link)
+
+        olt_groups = []
+        for olt, links in grouped.items():
+            olt_groups.append({
+                'olt': olt,
+                'tasks': [{
+                    'id': link.snmp_job_id,
+                    'name': link.snmp_job.nombre,
+                    'job_type': link.snmp_job.job_type,
+                    'interval': link.snmp_job.interval_seconds,
+                    'enabled': link.enabled and link.snmp_job.enabled,
+                    'next_run_at': link.next_run_at,
+                    'last_run_at': link.last_run_at,
+                } for link in links],
+            })
+
+        olt_groups.sort(key=lambda item: item['olt'].abreviatura)
+
+        olt_choices = OLT.objects.order_by('abreviatura').values('id', 'abreviatura')
+
+        summary_total = sum(len(item['tasks']) for item in olt_groups)
+
+        return {
+            'olt_groups': olt_groups,
+            'olt_choices': olt_choices,
+            'selected_olt': olt_filter,
+            'selected_task_type': type_filter,
+            'search_query': search_query,
+            'task_type_choices': SnmpJob.JOB_TYPES,
+            'summary_total': summary_total,
+        }
+
     def get_olts_count(self, obj):
         """Retorna el número de OLTs asociadas a la tarea"""
         return obj.olts.count()
@@ -56,6 +126,127 @@ class SnmpJobAdmin(admin.ModelAdmin):
             return f"{obj.oid.nombre}"
         return "-"
     get_oid_display.short_description = 'OID'
+    
+    def get_schedule_display(self, obj):
+        """Muestra la descripción del horario programado"""
+        return obj.get_schedule_description()
+    get_schedule_display.short_description = 'Horario'
+    
+    def get_status_icon(self, obj):
+        """Muestra un ícono visual del estado de la tarea"""
+        if obj.enabled:
+            return '🟢 Activa'
+        else:
+            return '🔴 Inactiva'
+    get_status_icon.short_description = 'Estado'
+    get_status_icon.admin_order_field = 'enabled'
+    
+    def get_job_hosts_info(self, obj):
+        """
+        Muestra información detallada de próximas ejecuciones por OLT
+        """
+        from django.utils.html import format_html
+        from snmp_jobs.models import SnmpJobHost
+        import pytz
+        
+        job_hosts = SnmpJobHost.objects.filter(
+            snmp_job=obj,
+            enabled=True
+        ).select_related('olt').order_by('next_run_at')
+        
+        if not job_hosts:
+            return format_html('<span style="color: orange;">⚠️ Sin OLTs asociadas</span>')
+        
+        lima_tz = pytz.timezone('America/Lima')
+        html_parts = ['<table style="border-collapse: collapse; width: 100%;">']
+        html_parts.append('<tr style="background-color: #f0f0f0; font-weight: bold;">')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">OLT</th>')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Próxima Ejecución</th>')
+        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Estado</th>')
+        html_parts.append('</tr>')
+        
+        for jh in job_hosts:
+            # Color según estado de la OLT
+            olt_color = 'green' if jh.olt.habilitar_olt else 'gray'
+            olt_icon = '🟢' if jh.olt.habilitar_olt else '⚫'
+            
+            # Próxima ejecución
+            if jh.next_run_at:
+                next_run_lima = jh.next_run_at.astimezone(lima_tz)
+                next_run_str = next_run_lima.strftime('%d/%m/%Y %H:%M:%S')
+                status_color = 'blue'
+                status_icon = '⏰'
+            else:
+                next_run_str = 'Sin programar'
+                status_color = 'red'
+                status_icon = '⚠️'
+            
+            html_parts.append('<tr>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {olt_color};">{olt_icon} {jh.olt.abreviatura}</span></td>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{next_run_str}</span></td>')
+            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{status_icon}</span></td>')
+            html_parts.append('</tr>')
+        
+        html_parts.append('</table>')
+        
+        return format_html(''.join(html_parts))
+    get_job_hosts_info.short_description = 'Próximas Ejecuciones por OLT'
+
+
+@admin.register(TaskFunction)
+class TaskFunctionAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "function_type", "module_path", "callable_name", "is_active")
+    list_filter = ("function_type", "is_active")
+    search_fields = ("code", "name", "module_path", "callable_name")
+    list_editable = ("is_active",)
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(TaskTemplate)
+class TaskTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "function", "default_priority", "default_interval_seconds", "is_active")
+    list_filter = ("default_priority", "is_active", "function__function_type")
+    search_fields = ("name", "slug", "function__name", "function__code")
+    list_editable = ("is_active",)
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(OLTWorkflow)
+class OLTWorkflowAdmin(admin.ModelAdmin):
+    list_display = ("olt", "name", "is_active", "theme", "node_count")
+    list_filter = ("is_active", "theme")
+    search_fields = ("olt__abreviatura", "olt__ip_address", "name")
+    readonly_fields = ("created_at", "updated_at")
+
+    def node_count(self, obj):
+        return obj.nodes.count()
+    node_count.short_description = "Nodos"
+
+
+@admin.register(WorkflowNode)
+class WorkflowNodeAdmin(admin.ModelAdmin):
+    list_display = ("name", "workflow", "template", "priority", "interval_seconds", "enabled")
+    list_filter = ("priority", "enabled", "workflow__theme", "template__function__function_type")
+    search_fields = ("name", "workflow__olt__abreviatura", "template__name")
+    readonly_fields = ("created_at", "updated_at")
+    actions = ["deshabilitar_nodos"]
+
+    @admin.action(description="Deshabilitar nodos seleccionados")
+    def deshabilitar_nodos(self, request, queryset):
+        updated = queryset.update(enabled=False)
+        self.message_user(
+            request,
+            f"{updated} nodo(s) deshabilitado(s).",
+            level=messages.SUCCESS,
+        )
+
+
+@admin.register(WorkflowEdge)
+class WorkflowEdgeAdmin(admin.ModelAdmin):
+    list_display = ("workflow", "upstream_node", "downstream_node", "edge_type")
+    list_filter = ("edge_type",)
+    search_fields = ("workflow__olt__abreviatura", "upstream_node__name", "downstream_node__name")
+    readonly_fields = ("created_at",)
     
     def get_urls(self):
         urls = super().get_urls()
@@ -343,20 +534,6 @@ class SnmpJobAdmin(admin.ModelAdmin):
         # Permitir edición
         return True
     
-    def get_schedule_display(self, obj):
-        """Muestra la descripción del horario programado"""
-        return obj.get_schedule_description()
-    get_schedule_display.short_description = 'Horario'
-    
-    def get_status_icon(self, obj):
-        """Muestra un ícono visual del estado de la tarea"""
-        if obj.enabled:
-            return '🟢 Activa'
-        else:
-            return '🔴 Inactiva'
-    get_status_icon.short_description = 'Estado'
-    get_status_icon.admin_order_field = 'enabled'
-    
     def get_next_run_display(self, obj):
         """
         Muestra la próxima ejecución MÁS CERCANA entre todas las OLTs
@@ -428,57 +605,6 @@ class SnmpJobAdmin(admin.ModelAdmin):
             hours = (total_seconds % 86400) // 3600
             return f"⏰ En {days}d {hours}h"
     get_time_until_next_run.short_description = 'Tiempo Restante'
-    
-    def get_job_hosts_info(self, obj):
-        """
-        Muestra información detallada de próximas ejecuciones por OLT
-        """
-        from django.utils.html import format_html
-        from snmp_jobs.models import SnmpJobHost
-        import pytz
-        
-        job_hosts = SnmpJobHost.objects.filter(
-            snmp_job=obj,
-            enabled=True
-        ).select_related('olt').order_by('next_run_at')
-        
-        if not job_hosts:
-            return format_html('<span style="color: orange;">⚠️ Sin OLTs asociadas</span>')
-        
-        lima_tz = pytz.timezone('America/Lima')
-        html_parts = ['<table style="border-collapse: collapse; width: 100%;">']
-        html_parts.append('<tr style="background-color: #f0f0f0; font-weight: bold;">')
-        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">OLT</th>')
-        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Próxima Ejecución</th>')
-        html_parts.append('<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Estado</th>')
-        html_parts.append('</tr>')
-        
-        for jh in job_hosts:
-            # Color según estado de la OLT
-            olt_color = 'green' if jh.olt.habilitar_olt else 'gray'
-            olt_icon = '🟢' if jh.olt.habilitar_olt else '⚫'
-            
-            # Próxima ejecución
-            if jh.next_run_at:
-                next_run_lima = jh.next_run_at.astimezone(lima_tz)
-                next_run_str = next_run_lima.strftime('%d/%m/%Y %H:%M:%S')
-                status_color = 'blue'
-                status_icon = '⏰'
-            else:
-                next_run_str = 'Sin programar'
-                status_color = 'red'
-                status_icon = '⚠️'
-            
-            html_parts.append('<tr>')
-            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {olt_color};">{olt_icon} {jh.olt.abreviatura}</span></td>')
-            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{next_run_str}</span></td>')
-            html_parts.append(f'<td style="padding: 8px; border: 1px solid #ddd;"><span style="color: {status_color};">{status_icon}</span></td>')
-            html_parts.append('</tr>')
-        
-        html_parts.append('</table>')
-        
-        return format_html(''.join(html_parts))
-    get_job_hosts_info.short_description = 'Próximas Ejecuciones por OLT'
 
     # Auto-refresh removido por solicitud del usuario
     def deshabilitar_tareas_seleccionadas(self, request, queryset):
@@ -818,6 +944,79 @@ class SnmpJobAdmin(admin.ModelAdmin):
         return True
 
 
+
+
+@admin.register(WorkflowTemplate)
+class WorkflowTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active", "olts_count_display", "node_count", "workflow_count", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "description")
+    readonly_fields = ("created_at", "updated_at", "olts_count_display")
+    
+    fieldsets = (
+        ("Información Básica", {
+            "fields": ("name", "description", "is_active")
+        }),
+        ("Estado", {
+            "fields": ("olts_count_display", "node_count", "workflow_count"),
+            "description": "⚠️ IMPORTANTE: Una plantilla solo puede ejecutarse si está vinculada a al menos una OLT. "
+                          "Las plantillas sin OLTs asignadas no generan ejecuciones."
+        }),
+        ("Fechas", {
+            "fields": ("created_at", "updated_at"),
+            "classes": ("collapse",)
+        }),
+    )
+    
+    def node_count(self, obj):
+        return obj.template_nodes.count()
+    node_count.short_description = "Nodos"
+    
+    def workflow_count(self, obj):
+        return obj.workflow_links.count()
+    workflow_count.short_description = "Workflows Vinculados"
+    
+    def olts_count_display(self, obj):
+        """Muestra el número de OLTs asignadas con advertencia si está activa sin OLTs"""
+        count = obj.olts_count
+        if obj.is_active and count == 0:
+            return format_html(
+                '<span style="color: red; font-weight: bold;">⚠️ {} OLTs (NO EJECUTABLE)</span>',
+                count
+            )
+        elif count == 0:
+            return format_html(
+                '<span style="color: orange;">{} OLTs (Inactiva)</span>',
+                count
+            )
+        else:
+            return format_html(
+                '<span style="color: green;">✅ {} OLTs</span>',
+                count
+            )
+    olts_count_display.short_description = "OLTs Asignadas"
+
+
+@admin.register(WorkflowTemplateNode)
+class WorkflowTemplateNodeAdmin(admin.ModelAdmin):
+    list_display = ("name", "template", "key", "oid", "get_espacio_display", "priority", "interval_seconds", "enabled")
+    list_filter = ("priority", "enabled", "template", "oid__espacio", "oid__marca", "oid__modelo")
+    search_fields = ("name", "key", "template__name", "oid__nombre", "oid__oid")
+    readonly_fields = ("created_at", "updated_at", "get_espacio_display")
+    autocomplete_fields = ["oid"]
+    
+    def get_espacio_display(self, obj):
+        """Muestra el espacio del OID"""
+        return obj.oid.get_espacio_display() if obj.oid else "-"
+    get_espacio_display.short_description = "Tipo"
+
+
+@admin.register(WorkflowTemplateLink)
+class WorkflowTemplateLinkAdmin(admin.ModelAdmin):
+    list_display = ("template", "workflow", "auto_sync", "created_at")
+    list_filter = ("auto_sync", "template")
+    search_fields = ("template__name", "workflow__olt__abreviatura")
+    readonly_fields = ("created_at", "updated_at")
 
 
 # No registrar estos modelos en el admin

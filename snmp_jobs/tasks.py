@@ -10,6 +10,9 @@ from easysnmp import Session, EasySNMPError
 from croniter import croniter
 from configuracion_avanzada.services import get_snmp_timeout, get_snmp_retries
 
+from execution_coordinator.event_utils import create_execution_event
+from execution_coordinator.logger import coordinator_logger
+
 from .models import SnmpJob, SnmpJobHost
 from executions.models import Execution
 from configuracion_avanzada.services import get_dispatcher_interval, get_max_concurrent_executions, is_retry_system_enabled
@@ -711,6 +714,67 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
             olt = execution.olt
             job = execution.snmp_job
             
+            # 🧪 MODO PRUEBA GLOBAL: Verificar si el modo prueba está activo
+            from configuracion_avanzada.models import ConfiguracionSistema
+            is_modo_prueba = ConfiguracionSistema.is_modo_prueba()
+            is_test_job = job.nombre.startswith('[PRUEBA]')
+            
+            if is_modo_prueba or is_test_job:
+                logger.info(f"🧪 MODO SIMULACIÓN: {job.nombre} - Simulando ejecución sin consultas SNMP reales")
+                
+                # IMPORTANTE: Actualizar estado a RUNNING antes de simular
+                execution.status = 'RUNNING'
+                execution.started_at = timezone.now()
+                execution.attempt = 0
+                execution.worker_name = queue_name
+                execution.save(update_fields=['status', 'started_at', 'attempt', 'worker_name'])
+                
+                import random
+                import time as time_module
+                
+                # Simular tiempo de ejecución (milisegundos a 3 minutos = 0.001 a 180 segundos)
+                simulation_duration = random.uniform(0.001, 180)
+                time_module.sleep(simulation_duration)
+                
+                # 80% éxito, 15% fallo, 5% interrumpido
+                rand = random.random()
+                if rand < 0.80:
+                    execution.status = 'SUCCESS'
+                    execution.result_summary = {
+                        'simulated': True,
+                        'total_found': random.randint(10, 100),
+                        'enabled_count': random.randint(5, 50),
+                        'disabled_count': random.randint(0, 20),
+                        'duration_ms': int(simulation_duration * 1000)
+                    }
+                    execution.error_message = None
+                elif rand < 0.95:
+                    execution.status = 'FAILED'
+                    execution.error_message = 'Simulación: Error simulado en tarea de prueba'
+                    execution.result_summary = {
+                        'simulated': True,
+                        'error': 'Error simulado',
+                        'duration_ms': int(simulation_duration * 1000)
+                    }
+                else:
+                    execution.status = 'INTERRUPTED'
+                    execution.error_message = 'Simulación: Ejecución interrumpida (tarea de prueba)'
+                    execution.result_summary = {
+                        'simulated': True,
+                        'interrupted': True,
+                        'duration_ms': int(simulation_duration * 1000)
+                    }
+                
+                execution.finished_at = timezone.now()
+                if not execution.started_at:
+                    execution.started_at = timezone.now()
+                if execution.started_at and execution.finished_at:
+                    execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+                execution.save()
+                
+                logger.info(f"🧪 Simulación completada: {execution.status} en {execution.duration_ms}ms")
+                return
+            
             # Obtener job_host si no existe
             if not execution.job_host:
                 job_host, created = SnmpJobHost.objects.get_or_create(
@@ -730,6 +794,26 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 execution.error_message = f"OLT {olt.abreviatura} deshabilitada"
                 execution.finished_at = timezone.now()
                 execution.save()
+                
+                # Registrar evento y log
+                details_interrupted = {
+                    'execution_id': execution.id,
+                    'queue': queue_name,
+                    'reason': 'OLT deshabilitada',
+                }
+                create_execution_event(
+                    event_type='EXECUTION_INTERRUPTED',
+                    execution=execution,
+                    decision='ABORT',
+                    reason=f"OLT {olt.abreviatura} deshabilitada",
+                    details=details_interrupted,
+                )
+                coordinator_logger.log_execution_interrupted(
+                    job.nombre,
+                    f"OLT {olt.abreviatura} deshabilitada",
+                    olt=olt,
+                    details=details_interrupted,
+                )
                 return
 
             # Intentar obtener lock de Redis
@@ -752,6 +836,26 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 execution.save()
                 
                 logger.info(f"🔍 execute_discovery EJECUTANDO - Status: RUNNING, Attempt: {execution.attempt}")
+
+                start_details = {
+                    'execution_id': execution.id,
+                    'queue': queue_name,
+                    'job_type': job.job_type,
+                    'attempt': execution.attempt,
+                    'job_host_id': job_host.id if job_host else None,
+                    'job_next_run_at': job_host.next_run_at.isoformat() if job_host and job_host.next_run_at else None,
+                }
+                create_execution_event(
+                    event_type='EXECUTION_STARTED',
+                    execution=execution,
+                    decision='ENQUEUE',
+                    details=start_details,
+                )
+                coordinator_logger.log_execution_started(
+                    job.nombre,
+                    olt=olt,
+                    details=start_details,
+                )
 
                 # Verificar nuevamente que la OLT siga habilitada durante la ejecución
                 olt.refresh_from_db()
@@ -842,6 +946,27 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
                 execution.save()
                 
+                success_details = {
+                    'execution_id': execution.id,
+                    'queue': queue_name,
+                    'duration_ms': execution.duration_ms,
+                    'job_type': job.job_type,
+                    'attempt': execution.attempt,
+                    'result_summary': execution.result_summary or {},
+                }
+                create_execution_event(
+                    event_type='EXECUTION_COMPLETED',
+                    execution=execution,
+                    decision='COMPLETE',
+                    details=success_details,
+                )
+                coordinator_logger.log_execution_completed(
+                    job.nombre,
+                    execution.duration_ms,
+                    olt=olt,
+                    details=success_details,
+                )
+                
                 # Actualizar estadísticas del job_host
                 job_host.consecutive_failures = 0
                 job_host.last_success_at = timezone.now()
@@ -886,6 +1011,28 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 job_host.last_failure_at = timezone.now()
                 job_host.save()
                 
+                error_details = {
+                    'execution_id': execution.id,
+                    'queue': queue_name,
+                    'duration_ms': execution.duration_ms,
+                    'job_type': job.job_type,
+                    'attempt': execution.attempt,
+                    'error': error_real,
+                }
+                create_execution_event(
+                    event_type='EXECUTION_FAILED',
+                    execution=execution,
+                    decision='ABORT',
+                    reason=error_real,
+                    details=error_details,
+                )
+                coordinator_logger.log_execution_failed(
+                    job.nombre,
+                    error_real,
+                    olt=olt,
+                    details=error_details,
+                )
+                
                 # Re-lanzar con el error REAL de la librería
                 raise Exception(error_real)
                 
@@ -905,6 +1052,28 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 job_host.consecutive_failures += 1
                 job_host.last_failure_at = timezone.now()
                 job_host.save()
+                
+                generic_error_details = {
+                    'execution_id': execution.id,
+                    'queue': queue_name,
+                    'duration_ms': execution.duration_ms,
+                    'job_type': job.job_type,
+                    'attempt': execution.attempt,
+                    'error': error_msg,
+                }
+                create_execution_event(
+                    event_type='EXECUTION_FAILED',
+                    execution=execution,
+                    decision='ABORT',
+                    reason=error_msg,
+                    details=generic_error_details,
+                )
+                coordinator_logger.log_execution_failed(
+                    job.nombre,
+                    error_msg,
+                    olt=olt,
+                    details=generic_error_details,
+                )
                 
                 # CALLBACK AL COORDINATOR: Notificar fallo
                 try:

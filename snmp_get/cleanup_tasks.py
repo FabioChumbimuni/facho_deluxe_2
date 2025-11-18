@@ -104,3 +104,53 @@ def cancel_pending_executions_for_disabled_jobs():
         'cancelled': cancelled
     }
 
+
+@shared_task(queue='cleanup')
+def cleanup_old_pending_executions(max_age_minutes=10):
+    """
+    Limpia ejecuciones PENDING muy antiguas que probablemente están atascadas.
+    
+    Si una ejecución está en estado PENDING por más de X minutos, probablemente
+    está atascada o nunca se procesó. Se marca como INTERRUPTED.
+    
+    Args:
+        max_age_minutes: Edad máxima en minutos antes de marcar como INTERRUPTED (default: 10)
+    """
+    from executions.models import Execution
+    
+    logger.info(f"🧹 Iniciando limpieza de ejecuciones PENDING antiguas (más de {max_age_minutes} minutos)")
+    
+    cutoff_time = timezone.now() - timedelta(minutes=max_age_minutes)
+    
+    # Buscar ejecuciones PENDING antiguas
+    old_pending_executions = Execution.objects.filter(
+        status='PENDING',
+        created_at__lt=cutoff_time
+    ).select_related('snmp_job', 'olt')
+    
+    total = old_pending_executions.count()
+    
+    if total == 0:
+        logger.info("✅ No hay ejecuciones PENDING antiguas para limpiar")
+        return {'status': 'success', 'cleaned': 0}
+    
+    # Mostrar detalles antes de limpiar
+    for e in old_pending_executions[:10]:
+        age_minutes = (timezone.now() - e.created_at).total_seconds() / 60
+        logger.info(f"  ⚠️ Ejecución PENDING antigua: ID {e.id} - {e.snmp_job.nombre if e.snmp_job else 'N/A'} - OLT: {e.olt.abreviatura if e.olt else 'N/A'} - Edad: {age_minutes:.1f} min")
+    
+    # Actualizar a INTERRUPTED
+    updated = old_pending_executions.update(
+        status='INTERRUPTED',
+        error_message=f'Ejecución PENDING atascada (más de {max_age_minutes} minutos sin procesar) - Auto-limpieza',
+        finished_at=timezone.now()
+    )
+    
+    logger.info(f"✅ Limpiadas {updated} ejecuciones PENDING antiguas (marcadas como INTERRUPTED)")
+    
+    return {
+        'status': 'success',
+        'cleaned': updated,
+        'cutoff_time': cutoff_time.isoformat()
+    }
+

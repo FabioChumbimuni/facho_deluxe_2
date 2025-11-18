@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Control Legacy SNMP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #111827;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --accent: #38bdf8;
+            --success: #22c55e;
+            --danger: #f87171;
+            --border: #1f2937;
+        }
+        body {
+            margin: 0;
+            font-family: "Inter", system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(56,189,248,0.2), rgba(14,165,233,0.05));
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.6rem;
+            letter-spacing: 0.05em;
+        }
+        main {
+            padding: 1.5rem 2.5rem 3rem;
+        }
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 1.5rem;
+            box-shadow: 0 18px 42px rgba(8,47,73,0.35);
+        }
+        .filters {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+        }
+        .filters label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.35rem;
+        }
+        .filters select,
+        .filters input {
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 0.65rem 0.9rem;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            min-width: 200px;
+        }
+        .filters button, .filters a.button {
+            border-radius: 12px;
+            border: none;
+            padding: 0.7rem 1.4rem;
+            background: var(--accent);
+            color: #0f172a;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1.2rem;
+        }
+        th, td {
+            padding: 0.65rem 0.75rem;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            font-size: 0.9rem;
+        }
+        th {
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+        .olt-header {
+            background: rgba(56,189,248,0.08);
+        }
+        .state-dot {
+            display: inline-flex;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+        }
+        .state-on { background: var(--success); }
+        .state-off { background: var(--danger); }
+        .toggle-btn {
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-primary);
+            padding: 0.35rem 0.9rem;
+            border-radius: 999px;
+            cursor: pointer;
+        }
+        .toggle-btn:hover {
+            background: rgba(56,189,248,0.12);
+        }
+        .empty {
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Control Legacy de Tareas SNMP</h1>
+        <!-- Link a workflow_builder eliminado - ahora se usa React + Vite como frontend -->
+        <!-- <a href="{% url 'snmp_jobs:workflow_builder' %}" class="button" style="text-decoration:none;">Ver panel Airflow</a> -->
+    </header>
+
+    <main>
+        <div class="card">
+            <form class="filters" method="get">
+                <div>
+                    <label for="filterOlt">OLT</label>
+                    <select id="filterOlt" name="olt">
+                        <option value="">Todas</option>
+                        {% for olt in available_olts %}
+                            <option value="{{ olt.id }}" {% if selected_olt == olt.id|stringformat:"s" %}selected{% endif %}>
+                                {{ olt.abreviatura }} ({{ olt.ip_address }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="align-self:flex-end;">
+                    <button type="submit">Filtrar</button>
+                    {% if selected_olt %}
+                        <a href="{% url 'snmp_jobs:legacy_control' %}" class="button" style="margin-left:0.6rem;">Limpiar</a>
+                    {% endif %}
+                </div>
+            </form>
+
+            {% if not olt_groups %}
+                <p class="empty">No hay tareas legacy para los filtros seleccionados.</p>
+            {% else %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>OLT</th>
+                            <th>Tarea</th>
+                            <th>Tipo</th>
+                            <th>Intervalo (s)</th>
+                            <th>Próxima ejecución</th>
+                            <th>Estado</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="legacyTableBody">
+                        {% for group in olt_groups %}
+                            <tr class="olt-header">
+                                <td><strong>{{ group.olt.abreviatura }}</strong></td>
+                                <td colspan="6">{{ group.olt.ip_address }}</td>
+                            </tr>
+                            {% for job in group.jobs %}
+                                <tr data-job-host="{{ job.id }}" data-olt="{{ group.olt.id }}">
+                                    <td></td>
+                                    <td>{{ job.name }}</td>
+                                    <td>{{ job.job_type|capfirst }}</td>
+                                    <td>{{ job.interval_seconds|default:"—" }}</td>
+                                    <td>
+                                        {% if job.next_run_at %}
+                                            {{ job.next_run_at|date:"Y-m-d H:i" }}
+                                        {% else %}
+                                            —
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="state-dot {% if job.enabled %}state-on{% else %}state-off{% endif %}"></span>
+                                        {{ job.enabled|yesno:"Activa,Inactiva" }}
+                                    </td>
+                                    <td>
+                                        <button class="toggle-btn legacy-toggle"
+                                                data-enabled="{{ job.host_enabled|yesno:"1,0" }}">
+                                            {{ job.host_enabled|yesno:"Desactivar,Activar" }}
+                                        </button>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+    </main>
+
+    <script>
+        function csrfToken() {
+            const name = 'csrftoken=';
+            const decoded = decodeURIComponent(document.cookie || '');
+            const parts = decoded.split(';');
+            for (let part of parts) {
+                part = part.trim();
+                if (part.indexOf(name) === 0) return part.substring(name.length, part.length);
+            }
+            return '';
+        }
+
+        function updateRow(row, data) {
+            row.querySelector('.state-dot').className = 'state-dot ' + (data.enabled ? 'state-on' : 'state-off');
+            row.querySelector('td:nth-child(6)').innerHTML =
+                `<span class="state-dot ${data.enabled ? 'state-on' : 'state-off'}"></span>${data.enabled ? 'Activa' : 'Inactiva'}`;
+            row.querySelector('.legacy-toggle').dataset.enabled = data.host_enabled ? '1' : '0';
+            row.querySelector('.legacy-toggle').textContent = data.host_enabled ? 'Desactivar' : 'Activar';
+            const nextRunCell = row.querySelector('td:nth-child(5)');
+            nextRunCell.textContent = data.next_run_at ? new Date(data.next_run_at).toLocaleString('es-PE', { hour12: false }) : '—';
+        }
+
+        document.getElementById('legacyTableBody')?.addEventListener('click', async (event) => {
+            if (!event.target.classList.contains('legacy-toggle')) return;
+
+            const button = event.target;
+            const row = button.closest('tr');
+            const enabled = button.dataset.enabled === '1';
+            const jobHostId = row.dataset.jobHost;
+            const oltId = row.dataset.olt;
+
+            button.disabled = true;
+            try {
+                const response = await fetch(`/snmp_jobs/api/olts/${oltId}/legacy-jobs/${jobHostId}/`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken(),
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ enabled: !enabled }),
+                });
+                if (!response.ok) {
+                    const text = await response.text();
+                    alert(text || 'No se pudo actualizar la tarea.');
+                } else {
+                    const data = await response.json();
+                    updateRow(row, data.job);
+                }
+            } catch (error) {
+                console.error('Error toggling legacy job', error);
+                alert('Error de conexión al actualizar la tarea.');
+            } finally {
+                button.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
+

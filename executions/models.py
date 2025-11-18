@@ -28,6 +28,14 @@ class Execution(models.Model):
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
     worker_name = models.CharField(max_length=255, null=True, blank=True)
+    workflow_node = models.ForeignKey(
+        'snmp_jobs.WorkflowNode',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_column='workflow_node_id',
+        related_name='executions'
+    )
 
     attempt = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
@@ -48,6 +56,7 @@ class Execution(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["workflow_node"]),
         ]
         verbose_name = "Ejecución"
         verbose_name_plural = "Ejecuciones"
