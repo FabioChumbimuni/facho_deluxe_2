@@ -267,8 +267,16 @@ def delete_history_records(self, record_ids):
                     """)
                     onu_status_updated = cursor.rowcount
                     
-                    if onu_inventory_updated > 0 or onu_status_updated > 0:
-                        logger.info(f"   🔗 Referencias FK actualizadas: onu_inventory={onu_inventory_updated}, onu_status={onu_status_updated}")
+                    # Actualizar coordinator_events.execution_id a NULL
+                    cursor.execute(f"""
+                        UPDATE coordinator_events 
+                        SET execution_id = NULL 
+                        WHERE execution_id IN ({ids_str})
+                    """)
+                    coordinator_events_updated = cursor.rowcount
+                    
+                    if onu_inventory_updated > 0 or onu_status_updated > 0 or coordinator_events_updated > 0:
+                        logger.info(f"   🔗 Referencias FK actualizadas: onu_inventory={onu_inventory_updated}, onu_status={onu_status_updated}, coordinator_events={coordinator_events_updated}")
                     
                     # AHORA: Borrar los registros de snmp_executions
                     sql_query = f"DELETE FROM snmp_executions WHERE id IN ({ids_str})"
@@ -367,16 +375,19 @@ def cleanup_old_executions_task(self, days_old=7, batch_size=1000):
 @shared_task
 def dispatcher_check_and_enqueue():
     """
-    Dispatcher inteligente que respeta intervalos y expresiones cron.
+    ⚠️ DESACTIVADO - Sistema Legacy
     
-    Funcionamiento:
-    1. Se ejecuta cada X segundos via Celery Beat (configurable)
-    2. Solo procesa jobs que están listos (next_run_at <= now)
-    3. Respeta intervalos (30s, 5m, 1h, 1d) y expresiones cron
-    4. Actualiza next_run_at SOLO después de encolar la tarea
-    5. Soporta job_type: 'descubrimiento' y 'get'
+    Este dispatcher usaba SnmpJob/SnmpJobHost directamente (sistema legacy).
+    Ahora el sistema usa WorkflowNode directamente a través del ExecutionCoordinator.
+    
+    El coordinador (coordinator_loop_task) ejecuta cada 5 segundos y lee directamente
+    de WorkflowNode, que es independiente por OLT y respeta el orden de ejecución
+    definido por WorkflowEdge.
+    
+    Este dispatcher se mantiene por compatibilidad pero NO se ejecuta.
     """
-    logger.info("🔍 Dispatcher Inteligente: Revisando tareas habilitadas...")
+    logger.warning("⚠️ dispatcher_check_and_enqueue DESACTIVADO - Sistema legacy. Usar ExecutionCoordinator con WorkflowNode.")
+    return  # Desactivado - usar ExecutionCoordinator
     
     now = timezone.now()
     # Mostrar hora en zona horaria de Perú
@@ -461,9 +472,9 @@ def dispatcher_check_and_enqueue():
 @shared_task(queue='discovery_main', bind=True, time_limit=180, autoretry_for=(Exception,), retry_kwargs={'max_retries': 0})
 def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
     """
-    Tarea principal de descubrimiento SNMP
-    Si falla, envía reintentos a cola separada (discovery_retry)
-    NO usa reintentos automáticos de Celery (max_retries=0)
+    Tarea principal de descubrimiento SNMP.
+    Los reintentos se manejan a nivel de configuración SNMP (ConfiguracionSNMP),
+    NO a nivel de tarea Celery.
     """
     # Log simplificado - solo información esencial
     
@@ -492,28 +503,13 @@ def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
                     execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
                 execution.save()
             
-            # SOLO enviar reintentos si NO es ejecución manual
-            if execution.requested_by is None:  # Ejecución automática (sin usuario)
-                # MARCAR OLT EN REINTENTO: Bloquear nuevas ejecuciones
-                from redis import Redis
-                from django.conf import settings
-                redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
-                retry_key = f"olt:retrying:{olt_id}"
-                redis_client.set(retry_key, '1', ex=600)  # Expira en 10 min (por si falla el cleanup)
-                
-                logger.info(f"⏸️ OLT {olt_id} marcada EN REINTENTO - bloqueadas nuevas ejecuciones")
-                
-                # Enviar reintento con delay de 30s
-                discovery_retry_task.apply_async(
-                    args=[snmp_job_id, olt_id, execution_id, 1],
-                    countdown=30  # 30 segundos de delay
-                )
-                logger.info(f"🔄 Enviado reintento 1 a cola discovery_retry (en 30s)")
-            else:
-                logger.info(f"🚫 Ejecución manual - NO se envían reintentos")
+            # ✅ NUEVO: Ya no se envían reintentos a nivel de tarea
+            # Los reintentos SNMP se manejan a nivel de configuración (ConfiguracionSNMP)
+            # Un nodo con sus reintentos SNMP cuenta como UNA ejecución
+            logger.info(f"ℹ️ Ejecución fallida - los reintentos SNMP se manejaron en la configuración")
             
-        except Exception as retry_exc:
-            logger.error(f"❌ Error enviando reintento: {str(retry_exc)}")
+        except Exception as exec_exc:
+            logger.error(f"❌ Error procesando fallo de ejecución: {str(exec_exc)}")
         
         # La tarea principal termina aquí (no usa self.retry)
         return
@@ -550,10 +546,10 @@ def discovery_manual_task(self, snmp_job_id, olt_id, execution_id):
                     execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
                 execution.save()
             
-            logger.info(f"🚫 Ejecución manual fallida - NO se envían reintentos")
+            logger.info(f"ℹ️ Ejecución manual fallida - los reintentos SNMP se manejaron en la configuración")
             
-        except Exception as retry_exc:
-            logger.error(f"❌ Error manejando fallo de ejecución manual: {str(retry_exc)}")
+        except Exception as manual_exc:
+            logger.error(f"❌ Error procesando fallo de ejecución manual: {str(manual_exc)}")
         
         return
 
@@ -561,132 +557,12 @@ def discovery_manual_task(self, snmp_job_id, olt_id, execution_id):
 @shared_task(queue='discovery_retry', bind=True, time_limit=180)
 def discovery_retry_task(self, snmp_job_id, olt_id, execution_id, retry_number):
     """
-    Tarea de reintento para descubrimiento SNMP
-    Verifica estado de OLT y tarea antes de ejecutar
-    NO usa reintentos automáticos de Celery (max_retries=0)
+    ⚠️ DEPRECADO: Esta tarea ya no se usa.
+    Los reintentos se manejan a nivel de configuración SNMP (ConfiguracionSNMP).
+    Se mantiene para compatibilidad con tareas en cola, pero retorna inmediatamente.
     """
-    logger.info(f"🔄 discovery_retry_task: Reintento {retry_number} para job {snmp_job_id}, OLT {olt_id}, execution {execution_id}")
-    
-    # VERIFICAR ESTADO ANTES DE EJECUTAR
-    try:
-        from snmp_jobs.models import SnmpJob
-        from hosts.models import OLT
-        from executions.models import Execution
-        
-        # Verificar si la tarea está deshabilitada
-        job = SnmpJob.objects.get(pk=snmp_job_id)
-        if not job.enabled:
-            logger.info(f"🛑 Reintento {retry_number} cancelado: tarea '{job.nombre}' deshabilitada")
-            execution = Execution.objects.get(pk=execution_id)
-            execution.status = 'INTERRUPTED'
-            execution.error_message = f"Tarea deshabilitada durante reintento {retry_number}"
-            from django.utils import timezone
-            execution.finished_at = timezone.now()
-            execution.save()
-            return
-        
-        # Verificar si la OLT está deshabilitada
-        olt = OLT.objects.get(pk=olt_id)
-        if not olt.habilitar_olt:
-            logger.info(f"🛑 Reintento {retry_number} cancelado: OLT '{olt.abreviatura}' deshabilitada")
-            execution = Execution.objects.get(pk=execution_id)
-            execution.status = 'INTERRUPTED'
-            execution.error_message = f"OLT {olt.abreviatura} deshabilitada durante reintento {retry_number}"
-            from django.utils import timezone
-            execution.finished_at = timezone.now()
-            execution.save()
-            return
-            
-    except Exception as check_exc:
-        logger.error(f"❌ Error verificando estado en reintento {retry_number}: {check_exc}")
-        return
-    
-    # Si llegamos aquí, todo está habilitado, proceder con el reintento
-    try:
-        # Crear una nueva ejecución para el reintento
-        from executions.models import Execution
-        from django.utils import timezone
-        
-        # Obtener la ejecución original para referencia
-        original_execution = Execution.objects.get(pk=execution_id)
-        
-        # Crear nueva ejecución para el reintento
-        retry_execution = Execution.objects.create(
-            snmp_job=original_execution.snmp_job,
-            job_host=original_execution.job_host,
-            olt=original_execution.olt,
-            status='PENDING',
-            attempt=retry_number,
-            requested_by=original_execution.requested_by,
-            created_at=timezone.now()
-        )
-        
-        logger.info(f"🔄 Creada nueva ejecución {retry_execution.id} para reintento {retry_number}")
-        
-        execute_discovery(snmp_job_id, olt_id, retry_execution.id, queue_name='discovery_retry')
-        
-        # Verificar el estado real de la nueva ejecución después de execute_discovery
-        retry_execution.refresh_from_db()
-        if retry_execution.status == 'SUCCESS':
-            # DESMARCAR OLT: Reanudar ejecuciones normales
-            from redis import Redis
-            from django.conf import settings
-            redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
-            retry_key = f"olt:retrying:{olt_id}"
-            redis_client.delete(retry_key)
-            logger.info(f"✅ OLT {olt_id} desbloqueada - reinicio exitoso, ejecuciones reanudadas")
-            logger.info(f"✅ discovery_retry_task: Reintento {retry_number} completado exitosamente")
-            return  # Salir si fue exitoso
-        
-        # Si llegamos aquí, el reintento falló
-        logger.error(f"❌ discovery_retry_task: Reintento {retry_number} falló - Estado: {retry_execution.status}, Error: {retry_execution.error_message}")
-        
-    except Exception as exc:
-        # Log del error sin traceback para mantener logs limpios
-        logger.error(f"❌ discovery_retry_task: Reintento {retry_number} falló - {str(exc)}")
-        
-        # Marcar como fallida
-        try:
-            if 'retry_execution' in locals():
-                retry_execution.refresh_from_db()
-                # Solo actualizar si no está ya marcada como fallida
-                if retry_execution.status != 'FAILED':
-                    retry_execution.status = 'FAILED'
-                    retry_execution.error_message = f"Reintento {retry_number}: {str(exc)}"
-                    retry_execution.finished_at = timezone.now()
-                    # Si no tiene started_at, asignarlo ahora
-                    if not retry_execution.started_at:
-                        retry_execution.started_at = timezone.now()
-                    # Calcular duración
-                    if retry_execution.started_at and retry_execution.finished_at:
-                        retry_execution.duration_ms = int((retry_execution.finished_at - retry_execution.started_at).total_seconds() * 1000)
-                    retry_execution.save()
-                
-        except Exception as retry_exc:
-            logger.error(f"❌ Error manejando fallo de reintento: {str(retry_exc)}")
-    
-    # Lógica de reintentos (se ejecuta siempre, tanto si falló execute_discovery como si hubo excepción)
-    try:
-        # Si es el primer reintento, enviar el segundo
-        if retry_number == 1:
-            logger.info(f"🔄 Enviando reintento 2 a cola discovery_retry")
-            # Enviar segundo reintento con delay de 30s usando la ejecución original
-            discovery_retry_task.apply_async(
-                args=[snmp_job_id, olt_id, execution_id, 2],
-                countdown=30  # 30 segundos de delay
-            )
-        else:
-            # DESMARCAR OLT: Reintentos agotados, reanudar ejecuciones normales
-            from redis import Redis
-            from django.conf import settings
-            redis_client = Redis.from_url(settings.CELERY_BROKER_URL)
-            retry_key = f"olt:retrying:{olt_id}"
-            redis_client.delete(retry_key)
-            logger.info(f"⚠️ OLT {olt_id} desbloqueada - reintentos agotados, ejecuciones reanudadas")
-            logger.info(f"❌ Todos los reintentos agotados para execution {execution_id}")
-            
-    except Exception as retry_exc:
-        logger.error(f"❌ Error enviando siguiente reintento: {str(retry_exc)}")
+    logger.warning(f"⚠️ discovery_retry_task DEPRECADO (retry {retry_number}): Los reintentos se manejan a nivel SNMP")
+    return False
 
 
 def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_main'):
@@ -715,12 +591,14 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
             job = execution.snmp_job
             
             # 🧪 MODO PRUEBA GLOBAL: Verificar si el modo prueba está activo
+            # IMPORTANTE: Compatible con WorkflowNode (nuevo sistema independiente)
             from configuracion_avanzada.models import ConfiguracionSistema
             is_modo_prueba = ConfiguracionSistema.is_modo_prueba()
-            is_test_job = job.nombre.startswith('[PRUEBA]')
+            is_test_job = job and job.nombre.startswith('[PRUEBA]') if job else False
             
             if is_modo_prueba or is_test_job:
-                logger.info(f"🧪 MODO SIMULACIÓN: {job.nombre} - Simulando ejecución sin consultas SNMP reales")
+                job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
+                logger.info(f"🧪 MODO SIMULACIÓN: {job_name} - Simulando ejecución sin consultas SNMP reales")
                 
                 # IMPORTANTE: Actualizar estado a RUNNING antes de simular
                 execution.status = 'RUNNING'
@@ -736,9 +614,15 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 simulation_duration = random.uniform(0.001, 180)
                 time_module.sleep(simulation_duration)
                 
-                # 80% éxito, 15% fallo, 5% interrumpido
+                # Obtener porcentajes configurables de simulación
+                porcentajes = ConfiguracionSistema.get_porcentajes_simulacion()
+                porcentaje_exito = porcentajes['porcentaje_exito'] / 100.0
+                porcentaje_fallo = porcentajes['porcentaje_fallo'] / 100.0
+                porcentaje_interrumpido = porcentajes['porcentaje_interrumpido'] / 100.0
+                
+                # Usar porcentajes configurables para determinar el resultado
                 rand = random.random()
-                if rand < 0.80:
+                if rand < porcentaje_exito:
                     execution.status = 'SUCCESS'
                     execution.result_summary = {
                         'simulated': True,
@@ -748,7 +632,7 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                         'duration_ms': int(simulation_duration * 1000)
                     }
                     execution.error_message = None
-                elif rand < 0.95:
+                elif rand < (porcentaje_exito + porcentaje_fallo):
                     execution.status = 'FAILED'
                     execution.error_message = 'Simulación: Error simulado en tarea de prueba'
                     execution.result_summary = {
@@ -773,6 +657,24 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 execution.save()
                 
                 logger.info(f"🧪 Simulación completada: {execution.status} en {execution.duration_ms}ms")
+                
+                # ✅ CRÍTICO: Llamar callback para actualizar WorkflowNode y ejecutar nodos en cadena
+                try:
+                    from execution_coordinator.callbacks import on_task_completed
+                    job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
+                    job_type = job.job_type if job else 'descubrimiento'
+                    
+                    on_task_completed(
+                        olt_id=olt_id,
+                        task_name=job_name,
+                        task_type=job_type,
+                        duration_ms=execution.duration_ms or 0,
+                        status=execution.status,
+                        execution_id=execution.id
+                    )
+                except Exception as callback_error:
+                    logger.error(f"❌ Error en callback de simulación: {callback_error}")
+                
                 return
             
             # Obtener job_host si no existe
@@ -986,7 +888,8 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                         task_name=job.nombre,
                         task_type=job.job_type,
                         duration_ms=execution.duration_ms,
-                        status='SUCCESS'
+                        status='SUCCESS',
+                        execution_id=execution.id  # ← NUEVO: Para actualizar WorkflowNode
                     )
                 except Exception as callback_error:
                     logger.warning(f"Error en callback coordinator: {callback_error}")

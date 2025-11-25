@@ -326,7 +326,9 @@ redirect_stderr=true
 stdout_logfile=$PROJECT_DIR/logs/celery_worker_main.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=10
-stopwaitsecs=600
+stopwaitsecs=60
+stopasgroup=true
+killasgroup=true
 environment=DJANGO_SETTINGS_MODULE="core.settings"
 
 ; ========================================
@@ -365,7 +367,7 @@ environment=DJANGO_SETTINGS_MODULE="core.settings"
 ; Celery Worker GET - Colas get_main, get_retry, get_poller
 ; ========================================
 [program:celery_worker_get]
-command=$VENV_DIR/bin/celery -A core worker --loglevel=INFO --queues=get_main,get_retry,get_poller --concurrency=15 --prefetch-multiplier=1 --max-tasks-per-child=1000 --hostname=get_worker@%%h
+command=$VENV_DIR/bin/celery -A core worker --loglevel=INFO --queues=get_main,get_retry,get_poller --concurrency=20 --prefetch-multiplier=1 --max-tasks-per-child=1000 --hostname=get_worker@%%h
 directory=$PROJECT_DIR
 user=$USER
 autostart=true

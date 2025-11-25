@@ -130,6 +130,95 @@ class ConfiguracionSistema(models.Model):
         except Exception:
             pass
         return False
+    
+    @staticmethod
+    def get_porcentajes_simulacion():
+        """
+        Obtiene los porcentajes de simulación para el modo prueba.
+        Retorna un diccionario con porcentaje_exito, porcentaje_fallo, porcentaje_interrumpido.
+        Por defecto: 80% éxito, 15% fallo, 5% interrumpido.
+        
+        Returns:
+            dict: {'porcentaje_exito': float, 'porcentaje_fallo': float, 'porcentaje_interrumpido': float}
+        """
+        try:
+            config = ConfiguracionSistema.objects.filter(
+                nombre='simulacion_porcentajes',
+                activo=True
+            ).first()
+            
+            if config and config.tipo == 'json':
+                porcentajes = config.get_valor_typed()
+                # Validar que los porcentajes sumen 100%
+                total = porcentajes.get('porcentaje_exito', 80) + \
+                        porcentajes.get('porcentaje_fallo', 15) + \
+                        porcentajes.get('porcentaje_interrumpido', 5)
+                if total == 100:
+                    return porcentajes
+            
+            # Valores por defecto
+            return {
+                'porcentaje_exito': 80.0,
+                'porcentaje_fallo': 15.0,
+                'porcentaje_interrumpido': 5.0
+            }
+        except Exception:
+            return {
+                'porcentaje_exito': 80.0,
+                'porcentaje_fallo': 15.0,
+                'porcentaje_interrumpido': 5.0
+            }
+    
+    @staticmethod
+    def set_porcentajes_simulacion(porcentaje_exito, porcentaje_fallo, porcentaje_interrumpido):
+        """
+        Guarda los porcentajes de simulación para el modo prueba.
+        
+        Args:
+            porcentaje_exito (float): Porcentaje de ejecuciones exitosas (0-100)
+            porcentaje_fallo (float): Porcentaje de ejecuciones con fallo (0-100)
+            porcentaje_interrumpido (float): Porcentaje de ejecuciones interrumpidas (0-100)
+        
+        Returns:
+            ConfiguracionSistema: La configuración creada o actualizada
+        """
+        # Validar que sumen 100%
+        total = porcentaje_exito + porcentaje_fallo + porcentaje_interrumpido
+        if abs(total - 100.0) > 0.01:  # Permitir pequeñas diferencias por redondeo
+            raise ValueError(f"Los porcentajes deben sumar 100%. Suma actual: {total}")
+        
+        # Validar rangos
+        if not (0 <= porcentaje_exito <= 100):
+            raise ValueError(f"porcentaje_exito debe estar entre 0 y 100. Valor: {porcentaje_exito}")
+        if not (0 <= porcentaje_fallo <= 100):
+            raise ValueError(f"porcentaje_fallo debe estar entre 0 y 100. Valor: {porcentaje_fallo}")
+        if not (0 <= porcentaje_interrumpido <= 100):
+            raise ValueError(f"porcentaje_interrumpido debe estar entre 0 y 100. Valor: {porcentaje_interrumpido}")
+        
+        import json
+        porcentajes = {
+            'porcentaje_exito': float(porcentaje_exito),
+            'porcentaje_fallo': float(porcentaje_fallo),
+            'porcentaje_interrumpido': float(porcentaje_interrumpido)
+        }
+        
+        config, created = ConfiguracionSistema.objects.get_or_create(
+            nombre='simulacion_porcentajes',
+            defaults={
+                'descripcion': 'Porcentajes de simulación para el modo prueba. Controla qué porcentaje de ejecuciones serán exitosas, fallidas o interrumpidas.',
+                'tipo': 'json',
+                'categoria': 'general',
+                'activo': True,
+                'valor': json.dumps(porcentajes, ensure_ascii=False)
+            }
+        )
+        
+        if not created:
+            config.valor = json.dumps(porcentajes, ensure_ascii=False)
+            config.activo = True
+            config.save()
+        
+        return config
 
 
 class ConfiguracionSNMP(models.Model):
@@ -139,6 +228,7 @@ class ConfiguracionSNMP(models.Model):
     TIPO_OPERACION_CHOICES = [
         ('descubrimiento', 'Descubrimiento (SNMP Walk)'),
         ('get', 'GET (Consultas Individuales)'),
+        ('walk', 'WALK (Recorrido de árbol SNMP)'),
         ('bulk', 'BULK (Consultas Masivas)'),
         ('table', 'TABLE (Tablas)'),
         ('general', 'General (Todas las operaciones)'),

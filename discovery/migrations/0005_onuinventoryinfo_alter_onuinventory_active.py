@@ -10,19 +10,20 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.CreateModel(
-            name='OnuInventoryInfo',
-            fields=[
-            ],
-            options={
-                'verbose_name': 'Información ONU',
-                'verbose_name_plural': 'Información ONU',
-                'proxy': True,
-                'indexes': [],
-                'constraints': [],
-            },
-            bases=('discovery.onuinventory',),
-        ),
+        # OnuInventoryInfo proxy model eliminado - ya no se usa
+        # migrations.CreateModel(
+        #     name='OnuInventoryInfo',
+        #     fields=[
+        #     ],
+        #     options={
+        #         'verbose_name': 'Información ONU',
+        #         'verbose_name_plural': 'Información ONU',
+        #         'proxy': True,
+        #         'indexes': [],
+        #         'constraints': [],
+        #     },
+        #     bases=('discovery.onuinventory',),
+        # ),
         migrations.AlterField(
             model_name='onuinventory',
             name='active',

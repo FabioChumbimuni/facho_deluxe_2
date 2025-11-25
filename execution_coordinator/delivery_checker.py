@@ -42,7 +42,14 @@ def check_pending_deliveries():
         dict: Estadísticas de verificación
     """
     now = timezone.now()
-    threshold = now - timedelta(seconds=90)  # Aumentado de 30s a 90s
+    # ✅ CRÍTICO: Aumentar threshold para evitar marcar tareas como perdidas prematuramente
+    # Las tareas pueden tardar más en ser recogidas, especialmente cuando:
+    # - Los descubrimientos duran más de lo normal (2+ minutos)
+    # - Los items en cadena deben esperar después del descubrimiento
+    # - Hay otros GET esperando
+    # El usuario requiere que TODAS las tareas sean recogidas, no se pueden perder
+    # IMPORTANTE: Si un descubrimiento dura 2 minutos, los GET pueden esperar 2+ minutos
+    threshold = now - timedelta(seconds=300)  # Aumentado de 180s a 300s (5 minutos) para dar más tiempo
     
     # Buscar PENDING antiguas con celery_task_id
     pending_execs = Execution.objects.filter(
@@ -102,13 +109,25 @@ def check_pending_deliveries():
                     snmp_job__job_type=job_type
                 ).count()
                 
-                # Límites de saturación
+                # ✅ CRÍTICO: Límites de saturación aumentados para evitar marcar tareas como perdidas
+                # El usuario requiere que TODAS las tareas sean recogidas
+                # Cada OLT funciona de manera independiente, no se combinan con el resto
+                # Si hay muchas tareas PENDING o RUNNING, el sistema está saturado y debe ESPERAR
                 SATURATION_THRESHOLD = {
-                    'descubrimiento': 20,
-                    'get': 20
+                    'descubrimiento': 40,  # Aumentado para considerar descubrimientos que duran más
+                    'get': 50  # Aumentado significativamente para GET (workers a 20, más capacidad)
                 }
                 
-                is_saturated = pending_same_type >= SATURATION_THRESHOLD.get(job_type, 15)
+                # También considerar tareas RUNNING como indicador de saturación
+                running_same_type = Execution.objects.filter(
+                    status='RUNNING',
+                    snmp_job__job_type=job_type
+                ).count()
+                
+                # ✅ IMPORTANTE: GET son independientes, NO esperan por descubrimientos
+                # Solo los items en cadena esperan por su master (ya implementado en workflow)
+                total_active = pending_same_type + running_same_type
+                is_saturated = total_active >= SATURATION_THRESHOLD.get(job_type, 40)
                 
                 if is_saturated:
                     # Sistema saturado, la tarea debe ESPERAR

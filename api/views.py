@@ -6,15 +6,32 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth.models import User
 from django.db.models import Count, Q
+from django.db import connection
 from django.utils import timezone
 from datetime import datetime, timedelta
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# CLASES DE PAGINACIÓN PERSONALIZADAS
+# ============================================================================
+
+class CustomPageNumberPagination(PageNumberPagination):
+    """
+    Paginación personalizada que permite al cliente controlar el page_size.
+    Uso: ?page=1&page_size=25
+    """
+    page_size = 50  # Por defecto
+    page_size_query_param = 'page_size'  # Permitir al cliente controlar page_size
+    max_page_size = 1000  # Límite máximo
+
 
 # Importar modelos
 from hosts.models import OLT
@@ -23,13 +40,13 @@ from olt_models.models import OLTModel
 from snmp_jobs.models import SnmpJob, WorkflowTemplate, WorkflowTemplateNode, OLTWorkflow, WorkflowNode
 from snmp_jobs.services.workflow_template_service import WorkflowTemplateService
 from executions.models import Execution
-from discovery.models import OnuIndexMap, OnuStateLookup, OnuInventory
+from discovery.models import OnuIndexMap, OnuStateLookup, OnuInventory, OnuStatus
 from oids.models import OID
 from snmp_formulas.models import IndexFormula
 from odf_management.models import ODF, ODFHilos, ZabbixPortData
 from personal.models import Personal, Area
 from zabbix_config.models import ZabbixConfiguration
-from configuracion_avanzada.models import ConfiguracionSistema
+from configuracion_avanzada.models import ConfiguracionSistema, ConfiguracionSNMP
 
 # Importar serializers
 from .serializers import (
@@ -42,7 +59,7 @@ from .serializers import (
     ZabbixConfigSerializer, DashboardStatsSerializer,
     WorkflowTemplateSerializer, WorkflowTemplateNodeSerializer,
     OLTWorkflowSerializer, WorkflowNodeSerializer,
-    ConfiguracionSistemaSerializer
+    ConfiguracionSistemaSerializer, ConfiguracionSNMPSerializer
 )
 
 
@@ -262,7 +279,7 @@ class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['snmp_job', 'olt', 'status']
+    filterset_fields = ['snmp_job', 'olt', 'status', 'workflow_node']  # ✅ Agregado workflow_node para filtrar por nodo
     search_fields = ['snmp_job__nombre', 'olt__abreviatura', 'olt__ip_address', 'error_message', 'workflow_node__name', 'workflow_node__workflow__name']
     ordering_fields = ['started_at', 'finished_at', 'created_at']
     ordering = ['-created_at']
@@ -281,6 +298,25 @@ class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
         executions = self.get_queryset().order_by('-created_at')[:limit]
         serializer = self.get_serializer(executions, many=True)
         return Response(serializer.data)
+    
+    def get_queryset(self):
+        """Sobrescribir para agregar logs de diagnóstico cuando se filtra por workflow_node"""
+        queryset = super().get_queryset()
+        
+        # Log cuando se filtra por workflow_node
+        workflow_node_id = self.request.query_params.get('workflow_node')
+        if workflow_node_id:
+            try:
+                node_id = int(workflow_node_id)
+                filtered_count = queryset.filter(workflow_node_id=node_id).count()
+                logger.info(
+                    f"📊 ExecutionViewSet: Filtrado por workflow_node={node_id}, "
+                    f"total ejecuciones encontradas: {filtered_count}"
+                )
+            except (ValueError, TypeError):
+                pass
+        
+        return queryset
 
 
 # ============================================================================
@@ -821,6 +857,502 @@ def health_check(request):
 
 
 # ============================================================================
+# VIEWS PARA ONT (Vista de PostgreSQL)
+# ============================================================================
+
+@extend_schema(
+    description="Obtener información de ONUs desde la vista onu_info_view de PostgreSQL",
+    parameters=[
+        OpenApiParameter(name='page', type=OpenApiTypes.INT, description='Número de página', required=False),
+        OpenApiParameter(name='page_size', type=OpenApiTypes.INT, description='Tamaño de página', required=False),
+        OpenApiParameter(name='search', type=OpenApiTypes.STR, description='Búsqueda en campos de texto', required=False),
+        OpenApiParameter(name='olt_id', type=OpenApiTypes.INT, description='Filtrar por OLT', required=False),
+    ],
+    responses={200: OpenApiTypes.OBJECT}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def onu_info_view_list(request):
+    """
+    Vista para consultar la vista de PostgreSQL onu_info_view.
+    No modela la tabla, solo consulta la vista directamente.
+    Detecta las columnas dinámicamente para construir filtros correctamente.
+    """
+    try:
+        # Obtener parámetros de paginación
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 50))
+        search = request.query_params.get('search', '').strip()
+        olt_id = request.query_params.get('olt_id')
+        estado_filter = request.query_params.get('estado', '').strip().lower()  # 'activo' o 'suspendido'
+        modelo_filter = request.query_params.get('modelo', '').strip()
+        distancia_filter = request.query_params.get('distancia', '').strip()
+        plan_filter = request.query_params.get('plan', '').strip()
+        
+        # Validar parámetros
+        if page < 1:
+            page = 1
+        if page_size < 1 or page_size > 1000:
+            page_size = 50
+        
+        # Primero obtener las columnas de la vista para construir filtros dinámicamente
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM onu_info_view LIMIT 0")
+            available_columns = [col[0] for col in cursor.description]
+        
+        # Construir la consulta SQL base
+        base_query = "SELECT * FROM onu_info_view"
+        conditions = []
+        params = []
+        
+        # Agregar filtros solo si las columnas existen
+        if olt_id:
+            # Buscar columnas relacionadas con OLT (olt_id, olt, host, olt_name, etc.)
+            # El usuario mencionó que puede ser "host" en lugar de "olt_id"
+            olt_column = None
+            possible_olt_columns = ['olt_id', 'olt', 'host', 'olt_name', 'olt_abreviatura']
+            
+            for col_name in possible_olt_columns:
+                if col_name in available_columns:
+                    olt_column = col_name
+                    break
+            
+            # Si no encontramos ninguna, buscar columnas que contengan "olt" o "host"
+            if not olt_column:
+                for col in available_columns:
+                    if 'olt' in col.lower() or 'host' in col.lower():
+                        olt_column = col
+                        break
+            
+            if olt_column:
+                # Determinar el tipo de dato de la columna consultando information_schema
+                column_type = None
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT data_type 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'onu_info_view' 
+                            AND column_name = %s
+                        """, [olt_column])
+                        result = cursor.fetchone()
+                        if result:
+                            column_type = result[0]
+                except Exception as e:
+                    logger.warning(f"Error obteniendo tipo de columna {olt_column}: {str(e)}")
+                
+                # Aplicar filtro según el tipo de dato
+                if column_type in ['integer', 'bigint', 'smallint']:
+                    # Columna numérica: filtrar por ID directamente
+                    conditions.append(f"{olt_column} = %s")
+                    params.append(int(olt_id))
+                elif column_type in ['character varying', 'text', 'varchar']:
+                    # Columna de texto: obtener OLT y buscar por abreviatura o IP
+                    try:
+                        olt_obj = OLT.objects.get(id=int(olt_id))
+                        # Buscar por abreviatura o IP
+                        conditions.append(f"({olt_column} = %s OR {olt_column} = %s)")
+                        params.extend([olt_obj.abreviatura, olt_obj.ip_address])
+                    except OLT.DoesNotExist:
+                        logger.warning(f"OLT con id {olt_id} no encontrada")
+                else:
+                    # Tipo desconocido, intentar como texto por defecto
+                    try:
+                        olt_obj = OLT.objects.get(id=int(olt_id))
+                        conditions.append(f"({olt_column} = %s OR {olt_column} = %s)")
+                        params.extend([olt_obj.abreviatura, olt_obj.ip_address])
+                    except OLT.DoesNotExist:
+                        logger.warning(f"OLT con id {olt_id} no encontrada")
+            else:
+                # Log para debug
+                logger.warning(f"No se encontró columna OLT. Columnas disponibles: {available_columns}")
+        
+        if search:
+            # Búsqueda en columnas de texto y numéricas disponibles
+            # Incluir Onudesc y otros campos comunes
+            search_columns = [
+                col for col in available_columns 
+                if col not in ['id'] and any(keyword in col.lower() for keyword in 
+                    ['normalized', 'mac', 'serial', 'description', 'desc', 'name', 'abreviatura', 'ip', 
+                     'onudesc', 'onu_desc', 'snmp_description', 'modelo', 'plan', 'index', 'snmpindex'])
+            ]
+            
+            if search_columns:
+                search_conditions = []
+                search_param = f"%{search}%"
+                
+                for col in search_columns:
+                    # Verificar el tipo de dato de la columna
+                    try:
+                        with connection.cursor() as cursor:
+                            cursor.execute("""
+                                SELECT data_type 
+                                FROM information_schema.columns 
+                                WHERE table_name = 'onu_info_view' 
+                                AND column_name = %s
+                            """, [col])
+                            result = cursor.fetchone()
+                            
+                            if result:
+                                col_type = result[0]
+                                # Si es numérica, buscar como número y como texto
+                                if col_type in ['integer', 'bigint', 'smallint', 'numeric']:
+                                    # Buscar como número exacto y como texto
+                                    search_conditions.append(f"({col} = %s OR CAST({col} AS TEXT) ILIKE %s)")
+                                    # Intentar convertir el search a número si es posible
+                                    try:
+                                        search_num = int(search)
+                                        params.append(search_num)
+                                    except:
+                                        params.append(None)  # Si no es número, usar None para que no coincida
+                                    params.append(search_param)
+                                else:
+                                    # Si es texto, buscar normalmente
+                                    search_conditions.append(f"CAST({col} AS TEXT) ILIKE %s")
+                                    params.append(search_param)
+                    except:
+                        # Si falla la verificación, intentar como texto por defecto
+                        search_conditions.append(f"CAST({col} AS TEXT) ILIKE %s")
+                        params.append(search_param)
+                
+                if search_conditions:
+                    conditions.append(f"({' OR '.join(search_conditions)})")
+        
+        # Agregar filtros adicionales (modelo, distancia, plan)
+        if modelo_filter:
+            # Buscar columna de modelo
+            modelo_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['modelo', 'model'])]
+            if modelo_columns:
+                modelo_col = modelo_columns[0]
+                conditions.append(f"{modelo_col} = %s")
+                params.append(modelo_filter)
+        
+        if distancia_filter:
+            # Buscar columna de distancia
+            distancia_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['distancia', 'distance'])]
+            if distancia_columns:
+                distancia_col = distancia_columns[0]
+                conditions.append(f"{distancia_col} = %s")
+                params.append(distancia_filter)
+        
+        if plan_filter:
+            # Buscar columna de plan
+            plan_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['plan'])]
+            if plan_columns:
+                plan_col = plan_columns[0]
+                conditions.append(f"{plan_col} = %s")
+                params.append(plan_filter)
+        
+        # Agregar filtro de estado si está presente
+        if estado_filter:
+            # Buscar columna de estado
+            estado_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['estado', 'status', 'state', 'presence', 'act_susp', 'last_state', 'last_state_value'])]
+            if estado_columns:
+                estado_col = estado_columns[0]
+                
+                # Determinar el tipo de dato de la columna de estado
+                estado_col_type = None
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT data_type 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'onu_info_view' 
+                            AND column_name = %s
+                        """, [estado_col])
+                        result = cursor.fetchone()
+                        if result:
+                            estado_col_type = result[0]
+                except:
+                    pass
+                
+                # Aplicar filtro según el tipo
+                if estado_filter == 'activo':
+                    if estado_col_type in ['integer', 'bigint', 'smallint']:
+                        conditions.append(f"{estado_col} = 1")
+                    else:
+                        conditions.append(f"({estado_col} = '1' OR {estado_col} = 'ACTIVO' OR {estado_col} ILIKE '%activo%' OR {estado_col} = 'ENABLED')")
+                elif estado_filter == 'suspendido':
+                    if estado_col_type in ['integer', 'bigint', 'smallint']:
+                        conditions.append(f"{estado_col} = 2")
+                    else:
+                        conditions.append(f"({estado_col} = '2' OR {estado_col} = 'SUSPENDIDO' OR {estado_col} ILIKE '%suspendido%' OR {estado_col} = 'DISABLED')")
+        
+        # Construir WHERE si hay condiciones
+        if conditions:
+            base_query += " WHERE " + " AND ".join(conditions)
+        
+        # Obtener el total de registros
+        count_query = f"SELECT COUNT(*) FROM ({base_query}) AS subquery"
+        with connection.cursor() as cursor:
+            cursor.execute(count_query, params)
+            total_count = cursor.fetchone()[0]
+        
+        # Obtener estadísticas adicionales (total, suspendidos, etc.)
+        stats = {}
+        try:
+            # Contar total sin filtros
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM onu_info_view")
+                stats['total'] = cursor.fetchone()[0]
+            
+            # Buscar columna de estado (puede ser estado, status, last_state_label, last_state_value, act_susp, etc.)
+            # El usuario indicó que "Act Susp" es igual a "-" y los valores numéricos son: 1=Activo, 2=Suspendido
+            estado_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['estado', 'status', 'state', 'presence', 'act_susp', 'last_state', 'last_state_value'])]
+            if estado_columns:
+                estado_col = estado_columns[0]
+                
+                # Determinar el tipo de dato de la columna de estado
+                estado_col_type = None
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT data_type 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'onu_info_view' 
+                            AND column_name = %s
+                        """, [estado_col])
+                        result = cursor.fetchone()
+                        if result:
+                            estado_col_type = result[0]
+                except Exception as e:
+                    logger.warning(f"Error obteniendo tipo de columna de estado: {str(e)}")
+                
+                # Contar suspendidos - El usuario indicó que 2 = Suspendido
+                try:
+                    with connection.cursor() as cursor:
+                        if estado_col_type in ['integer', 'bigint', 'smallint']:
+                            # Columna numérica: buscar directamente por 2
+                            cursor.execute(f"SELECT COUNT(*) FROM onu_info_view WHERE {estado_col} = 2")
+                        else:
+                            # Columna de texto: buscar por diferentes valores posibles
+                            cursor.execute(f"""
+                                SELECT COUNT(*) FROM onu_info_view 
+                                WHERE {estado_col} = '2'
+                                   OR {estado_col} = 'SUSPENDIDO' 
+                                   OR {estado_col} ILIKE '%suspendido%'
+                                   OR {estado_col} = 'DISABLED'
+                            """)
+                        stats['suspendidos'] = cursor.fetchone()[0]
+                except Exception as e:
+                    logger.warning(f"Error contando suspendidos: {str(e)}")
+                
+                # Contar activos - El usuario indicó que 1 = Activo
+                try:
+                    with connection.cursor() as cursor:
+                        if estado_col_type in ['integer', 'bigint', 'smallint']:
+                            # Columna numérica: buscar directamente por 1
+                            cursor.execute(f"SELECT COUNT(*) FROM onu_info_view WHERE {estado_col} = 1")
+                        else:
+                            # Columna de texto: buscar por diferentes valores posibles
+                            cursor.execute(f"""
+                                SELECT COUNT(*) FROM onu_info_view 
+                                WHERE {estado_col} = '1'
+                                   OR {estado_col} = 'ACTIVO' 
+                                   OR {estado_col} ILIKE '%activo%'
+                                   OR {estado_col} = 'ENABLED'
+                            """)
+                        stats['activos'] = cursor.fetchone()[0]
+                except Exception as e:
+                    logger.warning(f"Error contando activos: {str(e)}")
+            
+            # Buscar otras columnas útiles para estadísticas
+            # Contar por presencia si existe
+            presence_columns = [col for col in available_columns if 'presence' in col.lower()]
+            if presence_columns and 'suspendidos' not in stats:
+                try:
+                    presence_col = presence_columns[0]
+                    with connection.cursor() as cursor:
+                        cursor.execute(f"SELECT COUNT(*) FROM onu_info_view WHERE {presence_col} = 'DISABLED'")
+                        stats['suspendidos'] = cursor.fetchone()[0]
+                    with connection.cursor() as cursor:
+                        cursor.execute(f"SELECT COUNT(*) FROM onu_info_view WHERE {presence_col} = 'ENABLED'")
+                        stats['activos'] = cursor.fetchone()[0]
+                except:
+                    pass
+                    
+        except Exception as stats_error:
+            logger.warning(f"Error obteniendo estadísticas: {str(stats_error)}")
+        
+        # Incluir información de debug (columnas disponibles) en modo desarrollo
+        debug_info = {}
+        if request.query_params.get('debug') == 'true':
+            debug_info['available_columns'] = available_columns
+        
+        # Calcular offset y limit para paginación
+        offset = (page - 1) * page_size
+        
+        # Determinar columna de ordenamiento (preferir id, sino la primera columna)
+        order_by = 'id' if 'id' in available_columns else available_columns[0] if available_columns else '1'
+        query = f"{base_query} ORDER BY {order_by} LIMIT %s OFFSET %s"
+        params.extend([page_size, offset])
+        
+        # Ejecutar la consulta principal
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            columns = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()
+        
+        # Convertir resultados a diccionarios
+        results = [dict(zip(columns, row)) for row in rows]
+        
+        # Calcular información de paginación
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+        has_next = page < total_pages
+        has_previous = page > 1
+        
+        # Preparar respuesta
+        response_data = {
+            'count': total_count,
+            'next': f"?page={page + 1}&page_size={page_size}" if has_next else None,
+            'previous': f"?page={page - 1}&page_size={page_size}" if has_previous else None,
+            'current_page': page,
+            'total_pages': total_pages,
+            'page_size': page_size,
+            'columns': available_columns,  # Incluir columnas disponibles
+            'stats': stats,  # Incluir estadísticas
+            'results': results
+        }
+        
+        # Agregar debug info si está habilitado
+        if debug_info:
+            response_data['debug'] = debug_info
+        
+        # Agregar filtros a next/previous si existen
+        if olt_id:
+            filter_params = f"&olt_id={olt_id}"
+            if response_data['next']:
+                response_data['next'] += filter_params
+            if response_data['previous']:
+                response_data['previous'] += filter_params
+        
+        if search:
+            filter_params = f"&search={search}"
+            if response_data['next']:
+                response_data['next'] += filter_params
+            if response_data['previous']:
+                response_data['previous'] += filter_params
+        
+        return Response(response_data)
+    
+    except Exception as e:
+        logger.error(f"Error consultando onu_info_view: {str(e)}", exc_info=True)
+        return Response(
+            {'error': f'Error al consultar la vista: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    description="Obtener estadísticas de ONUs agrupadas por OLT desde modelos de Django",
+    responses={200: OpenApiTypes.OBJECT}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def onu_stats_by_olt(request):
+    """
+    Vista para obtener estadísticas de ONUs agrupadas por OLT.
+    Usa los modelos de Django directamente (OnuInventory y OnuStatus).
+    Retorna total, activos y suspendidos por cada OLT.
+    """
+    try:
+        # Obtener todas las OLTs
+        olts = OLT.objects.all().order_by('abreviatura')
+        
+        stats_by_olt = []
+        
+        # Para cada OLT, obtener estadísticas desde los modelos de Django
+        for olt in olts:
+            try:
+                # Para la TABLA: Contar ENABLED y DISABLED (basado en presence)
+                enabled = OnuStatus.objects.filter(
+                    olt=olt,
+                    presence='ENABLED'
+                ).count()
+                
+                disabled = OnuStatus.objects.filter(
+                    olt=olt,
+                    presence='DISABLED'
+                ).count()
+                
+                # El TOTAL para la tabla debe ser ENABLED + DISABLED
+                total_table = enabled + disabled
+                
+                # Si no hay datos en OnuStatus, intentar desde OnuInventory como fallback
+                if total_table == 0:
+                    enabled = OnuInventory.objects.filter(olt=olt, active=True).count()
+                    disabled = OnuInventory.objects.filter(olt=olt, active=False).count()
+                    total_table = enabled + disabled
+                
+                # Para el GRÁFICO: Contar ACTIVOS y SUSPENDIDOS (basado en last_state_value)
+                # IMPORTANTE: Solo contar los que tienen presence='ENABLED'
+                # porque el gráfico muestra el estado operativo de las ONUs habilitadas
+                activos = OnuStatus.objects.filter(
+                    olt=olt,
+                    last_state_value=1,
+                    presence='ENABLED'  # Solo contar las habilitadas
+                ).count()
+                
+                suspendidos = OnuStatus.objects.filter(
+                    olt=olt,
+                    last_state_value=2,
+                    presence='ENABLED'  # Solo contar las habilitadas
+                ).count()
+                
+                # El TOTAL para el gráfico debe ser ACTIVOS + SUSPENDIDOS (solo de las habilitadas)
+                total_graph = activos + suspendidos
+                
+                # Si no hay last_state_value, usar enabled como aproximación para activos
+                # y 0 para suspendidos (porque si no hay last_state_value, no podemos saber)
+                if total_graph == 0:
+                    # Si no hay datos de last_state_value, usar enabled como aproximación
+                    activos = enabled
+                    suspendidos = 0
+                    total_graph = activos + suspendidos
+                
+                stats_by_olt.append({
+                    'olt': {
+                        'id': olt.id,
+                        'abreviatura': olt.abreviatura,
+                        'ip_address': olt.ip_address,
+                        'name': olt.abreviatura or olt.ip_address
+                    },
+                    'total': total_table,  # Total para la tabla (ENABLED + DISABLED)
+                    'total_graph': total_graph,  # Total para el gráfico (ACTIVOS + SUSPENDIDOS)
+                    'activos': activos,
+                    'suspendidos': suspendidos,
+                    'enabled': enabled,
+                    'disabled': disabled
+                })
+                
+            except Exception as e:
+                logger.warning(f"Error obteniendo estadísticas para OLT {olt.abreviatura}: {str(e)}", exc_info=True)
+                # Agregar OLT con valores en 0 si hay error
+                stats_by_olt.append({
+                    'olt': {
+                        'id': olt.id,
+                        'abreviatura': olt.abreviatura,
+                        'ip_address': olt.ip_address,
+                        'name': olt.abreviatura or olt.ip_address
+                    },
+                    'total': 0,
+                    'activos': 0,
+                    'suspendidos': 0
+                })
+        
+        return Response({
+            'stats': stats_by_olt
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error al obtener estadísticas por OLT: {str(e)}", exc_info=True)
+        return Response(
+            {'error': f'Error al obtener estadísticas: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ============================================================================
 # VIEWSETS DE WORKFLOWS
 # ============================================================================
 
@@ -1088,16 +1620,43 @@ class OLTWorkflowViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     
     @extend_schema(
-        description="Obtener nodos de un workflow",
+        description="Obtener nodos de un workflow con estadísticas de ejecuciones",
         responses={200: WorkflowNodeSerializer(many=True)}
     )
     @action(detail=True, methods=['get'])
     def nodes(self, request, pk=None):
-        """Obtener nodos de un workflow"""
+        """Obtener nodos de un workflow con estadísticas de ejecuciones (cuota actual)"""
+        from django.utils import timezone
+        from datetime import timedelta
+        from executions.models import Execution
+        import pytz
+        
         workflow = self.get_object()
-        nodes = workflow.nodes.all()
-        serializer = WorkflowNodeSerializer(nodes, many=True)
-        return Response({'nodes': serializer.data})
+        nodes = workflow.nodes.select_related('master_node', 'template_node', 'template_node__template').all()
+        
+        # Obtener estadísticas de ejecuciones para cada nodo
+        now = timezone.now()
+        one_hour_ago = now - timedelta(hours=1)
+        peru_tz = pytz.timezone('America/Lima')
+        
+        nodes_data = []
+        for node in nodes:
+            node_dict = WorkflowNodeSerializer(node).data
+            
+            # Calcular solo ejecuciones totales del nodo master (sin cuota)
+            from executions.models import Execution
+            total_executions = Execution.objects.filter(
+                workflow_node=node,
+                status__in=['SUCCESS', 'FAILED', 'INTERRUPTED']
+            ).count()
+            
+            node_dict['execution_stats'] = {
+                'total_executions': total_executions
+            }
+            
+            nodes_data.append(node_dict)
+        
+        return Response({'nodes': nodes_data})
 
 
 @extend_schema_view(
@@ -1165,8 +1724,26 @@ class ConfiguracionSistemaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def modo_prueba(self, request):
         """Obtener el estado del modo prueba"""
-        is_active = ConfiguracionSistema.is_modo_prueba()
-        return Response({'modo_prueba': is_active})
+        try:
+            # Verificar que el método estático existe y funciona
+            if not hasattr(ConfiguracionSistema, 'is_modo_prueba'):
+                logger.error("ConfiguracionSistema.is_modo_prueba no existe")
+                return Response({
+                    'error': 'Método is_modo_prueba no disponible',
+                    'modo_prueba': False
+                }, status=500)
+            
+            is_active = ConfiguracionSistema.is_modo_prueba()
+            return Response({'modo_prueba': bool(is_active)})
+        except Exception as e:
+            logger.error(f"Error en modo_prueba: {e}", exc_info=True)
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Traceback completo: {error_trace}")
+            return Response({
+                'error': f'Error obteniendo estado del modo prueba: {str(e)}',
+                'modo_prueba': False
+            }, status=500)
     
     @extend_schema(
         description="Activar o desactivar el modo prueba",
@@ -1175,7 +1752,14 @@ class ConfiguracionSistemaViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def toggle_modo_prueba(self, request):
-        """Activar o desactivar el modo prueba"""
+        """
+        Activar o desactivar el modo prueba.
+        
+        Al cambiar el modo prueba:
+        - Se abortan todas las ejecuciones PENDING y RUNNING
+        - Se recalculan los next_run_at de todos los nodos habilitados
+          desde el momento de cambio + intervalo (nada se ejecuta inmediatamente)
+        """
         modo_prueba = request.data.get('modo_prueba', False)
         
         # Obtener o crear configuración para modo prueba
@@ -1191,10 +1775,226 @@ class ConfiguracionSistemaViewSet(viewsets.ModelViewSet):
         )
         
         if not created:
+            # Guardar el valor anterior para la señal
+            old_modo_prueba = config.modo_prueba
             config.modo_prueba = modo_prueba
             config.activo = True
+            # El save() disparará la señal post_save que abortará ejecuciones y recalculará tiempos
             config.save()
+            
+            logger.info(
+                f"🔄 Modo prueba {'ACTIVADO' if modo_prueba else 'DESACTIVADO'} desde API. "
+                f"Se abortarán ejecuciones y se recalcularán tiempos."
+            )
+        else:
+            # Si es nueva, no hay cambio que detectar, pero igual logueamos
+            logger.info(
+                f"🔄 Modo prueba {'ACTIVADO' if modo_prueba else 'DESACTIVADO'} desde API (configuración nueva)."
+            )
         
         serializer = self.get_serializer(config)
         return Response(serializer.data)
+    
+    @extend_schema(
+        description="Obtener los porcentajes de simulación del modo prueba",
+        responses={200: {'type': 'object', 'properties': {
+            'porcentaje_exito': {'type': 'number'},
+            'porcentaje_fallo': {'type': 'number'},
+            'porcentaje_interrumpido': {'type': 'number'}
+        }}}
+    )
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def porcentajes_simulacion(self, request):
+        """Obtener los porcentajes de simulación"""
+        try:
+            porcentajes = ConfiguracionSistema.get_porcentajes_simulacion()
+            return Response(porcentajes)
+        except Exception as e:
+            logger.error(f"Error en porcentajes_simulacion: {e}", exc_info=True)
+            return Response({
+                'error': f'Error obteniendo porcentajes: {str(e)}',
+                'porcentaje_exito': 80.0,
+                'porcentaje_fallo': 15.0,
+                'porcentaje_interrumpido': 5.0
+            }, status=500)
+    
+    @extend_schema(
+        description="Configurar los porcentajes de simulación del modo prueba",
+        request={'type': 'object', 'properties': {
+            'porcentaje_exito': {'type': 'number'},
+            'porcentaje_fallo': {'type': 'number'},
+            'porcentaje_interrumpido': {'type': 'number'}
+        }},
+        responses={200: {'type': 'object', 'properties': {
+            'porcentaje_exito': {'type': 'number'},
+            'porcentaje_fallo': {'type': 'number'},
+            'porcentaje_interrumpido': {'type': 'number'}
+        }}}
+    )
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def set_porcentajes_simulacion(self, request):
+        """Configurar los porcentajes de simulación"""
+        try:
+            porcentaje_exito = request.data.get('porcentaje_exito', 80.0)
+            porcentaje_fallo = request.data.get('porcentaje_fallo', 15.0)
+            porcentaje_interrumpido = request.data.get('porcentaje_interrumpido', 5.0)
+            
+            config = ConfiguracionSistema.set_porcentajes_simulacion(
+                porcentaje_exito, porcentaje_fallo, porcentaje_interrumpido
+            )
+            porcentajes = ConfiguracionSistema.get_porcentajes_simulacion()
+            return Response(porcentajes)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        except Exception as e:
+            logger.error(f"Error en set_porcentajes_simulacion: {e}", exc_info=True)
+            return Response({
+                'error': f'Error actualizando porcentajes: {str(e)}'
+            }, status=500)
 
+
+# ============================================================================
+# VIEWSET DE CONFIGURACIÓN SNMP
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="Listar configuraciones SNMP"),
+    retrieve=extend_schema(description="Obtener detalles de una configuración SNMP"),
+    create=extend_schema(description="Crear una nueva configuración SNMP"),
+    update=extend_schema(description="Actualizar una configuración SNMP"),
+    partial_update=extend_schema(description="Actualizar parcialmente una configuración SNMP"),
+    destroy=extend_schema(description="Eliminar una configuración SNMP"),
+)
+class ConfiguracionSNMPViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar configuraciones SNMP
+    """
+    queryset = ConfiguracionSNMP.objects.all()
+    serializer_class = ConfiguracionSNMPSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['tipo_operacion', 'activo', 'version']
+    search_fields = ['nombre', 'tipo_operacion']
+    ordering_fields = ['nombre', 'tipo_operacion', 'fecha_creacion', 'fecha_modificacion']
+    ordering = ['tipo_operacion', 'nombre']
+    pagination_class = CustomPageNumberPagination
+
+
+# ============================================================================
+# ENDPOINT: Futuras Ejecuciones de Workflows
+# ============================================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@extend_schema(
+    description="Obtener lista de todas las futuras ejecuciones programadas de workflows",
+    parameters=[
+        OpenApiParameter(name='limit', type=OpenApiTypes.INT, description='Número máximo de ejecuciones a retornar (default: 50)'),
+        OpenApiParameter(name='olt', type=OpenApiTypes.INT, description='Filtrar por OLT ID (opcional)'),
+    ],
+    responses={200: OpenApiResponse(description='Lista de ejecuciones programadas')}
+)
+def future_executions_list(request):
+    """
+    Lista todas las futuras ejecuciones programadas de todos los workflows activos
+    """
+    from snmp_jobs.models import WorkflowNode, OLTWorkflow
+    from hosts.models import OLT
+    from django.utils import timezone
+    from datetime import timedelta
+    import pytz
+    
+    peru_tz = pytz.timezone('America/Lima')
+    now = timezone.now()
+    now_peru = timezone.localtime(now, peru_tz)
+    
+    limit = int(request.query_params.get('limit', 50))
+    olt_id = request.query_params.get('olt')
+    
+    # Obtener todos los workflows activos
+    workflows = OLTWorkflow.objects.filter(is_active=True).select_related('olt').order_by('olt__abreviatura')
+    
+    if olt_id:
+        workflows = workflows.filter(olt_id=olt_id)
+    
+    all_executions = []
+    
+    for workflow in workflows:
+        olt = workflow.olt
+        if not olt or not olt.habilitar_olt:
+            continue
+        
+        # Obtener todos los nodos del workflow (solo master/normales, no chain)
+        nodes = WorkflowNode.objects.filter(
+            workflow=workflow,
+            enabled=True,
+            is_chain_node=False,
+            next_run_at__isnull=False
+        ).select_related('template_node', 'template_node__template').order_by('next_run_at')
+        
+        for node in nodes:
+            next_run_peru = timezone.localtime(node.next_run_at, peru_tz)
+            time_until = (node.next_run_at - now).total_seconds()
+            
+            # Calcular tiempo relativo
+            if time_until < 0:
+                relative_time = f'Hace {int(abs(time_until) // 60)} min'
+                status = 'PASADO'
+            elif time_until < 60:
+                relative_time = f'En {int(time_until)} seg'
+                status = 'INMINENTE'
+            elif time_until < 300:
+                relative_time = f'En {int(time_until // 60)} min'
+                status = 'PRÓXIMO'
+            elif time_until < 3600:
+                relative_time = f'En {int(time_until // 60)} min'
+                status = 'PROGRAMADO'
+            else:
+                hours = int(time_until // 3600)
+                mins = int((time_until % 3600) // 60)
+                relative_time = f'En {hours}h {mins}m'
+                status = 'FUTURO'
+            
+            interval_min = node.interval_seconds // 60 if node.interval_seconds else 0
+            template_name = node.template_node.template.name if node.template_node and node.template_node.template else 'N/A'
+            
+            all_executions.append({
+                'olt': {
+                    'id': olt.id,
+                    'abreviatura': olt.abreviatura,
+                    'ip_address': olt.ip_address
+                },
+                'workflow': {
+                    'id': workflow.id,
+                    'name': workflow.name or f'Workflow {workflow.id}'
+                },
+                'node': {
+                    'id': node.id,
+                    'name': node.name,
+                    'key': node.key
+                },
+                'template': template_name,
+                'interval_minutes': interval_min,
+                'interval_seconds': node.interval_seconds or 0,
+                'next_run_at': node.next_run_at.isoformat(),
+                'next_run_at_peru': next_run_peru.strftime('%Y-%m-%d %H:%M:%S'),
+                'next_run_time': next_run_peru.strftime('%H:%M:%S'),
+                'next_run_date': next_run_peru.strftime('%Y-%m-%d'),
+                'relative_time': relative_time,
+                'status': status,
+                'time_until_seconds': int(time_until),
+                'is_past': time_until < 0,
+                'is_imminent': 0 <= time_until < 60
+            })
+    
+    # Ordenar por próxima ejecución
+    all_executions.sort(key=lambda x: x['time_until_seconds'])
+    all_executions = all_executions[:limit]
+    
+    return Response({
+        'current_time': now.isoformat(),
+        'current_time_peru': now_peru.strftime('%Y-%m-%d %H:%M:%S'),
+        'total': len(all_executions),
+        'limit': limit,
+        'executions': all_executions
+    }, status=status.HTTP_200_OK)

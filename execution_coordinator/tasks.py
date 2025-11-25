@@ -77,6 +77,18 @@ def coordinator_loop_task(self):
     if not active_olts.exists():
         return
     
+    # ✅ DISTRIBUCIÓN DE EJECUCIONES: Verificar y distribuir ejecuciones para evitar saturación
+    # El coordinador verifica cada 2 minutos cómo se ejecutan las OLTs y distribuye
+    # las ejecuciones en un rango de hasta 3 minutos (una vez por loop, no por cada OLT)
+    # IMPORTANTE: La función tiene un lock interno de 2 minutos para evitar redistribuciones constantes
+    from .dynamic_scheduler import DynamicScheduler
+    DynamicScheduler.distribute_workflow_executions()
+    
+    # ✅ LÓGICA AVANZADA: Verificar capacidad de pollers y atrasar ejecuciones si están saturados
+    # Si hay ejecuciones que duran más de 1 minuto y los pollers están saturados,
+    # atrasa las siguientes ejecuciones en 10 segundos hasta que haya espacio
+    DynamicScheduler.check_poller_capacity_and_delay()
+    
     changes_detected = False
     
     for olt in active_olts:
@@ -104,9 +116,8 @@ def coordinator_loop_task(self):
             # Esto garantiza:
             # - Auto-reparación de JobHosts sin next_run_at (cada 5s)
             # - Ejecución de tareas listas aunque no haya cambios de estado
-            from .dynamic_scheduler import DynamicScheduler
-            
             scheduler = DynamicScheduler(olt.id)
+            # Solo 1 nodo a la vez por OLT, pero el sistema puede ejecutar nodos de diferentes OLTs simultáneamente
             tasks_processed = scheduler.process_ready_tasks(olt)
             
             if tasks_processed > 0:

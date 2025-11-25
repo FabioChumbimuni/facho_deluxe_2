@@ -18,7 +18,9 @@ from .views import (
     AreaViewSet, PersonalViewSet, ZabbixConfigViewSet,
     WorkflowTemplateViewSet, WorkflowTemplateNodeViewSet,
     OLTWorkflowViewSet, WorkflowNodeViewSet, ConfiguracionSistemaViewSet,
-    dashboard_stats, health_check
+    ConfiguracionSNMPViewSet,
+    dashboard_stats, health_check, onu_info_view_list, onu_stats_by_olt,
+    future_executions_list
 )
 
 # Crear el router
@@ -47,6 +49,7 @@ router.register(r'workflow-template-nodes', WorkflowTemplateNodeViewSet, basenam
 router.register(r'olt-workflows', OLTWorkflowViewSet, basename='olt-workflow')
 router.register(r'workflow-nodes', WorkflowNodeViewSet, basename='workflow-node')
 router.register(r'configuracion-sistema', ConfiguracionSistemaViewSet, basename='configuracion-sistema')
+router.register(r'configuracion-snmp', ConfiguracionSNMPViewSet, basename='configuracion-snmp')
 
 # URLs de la API
 urlpatterns = [
@@ -56,6 +59,13 @@ urlpatterns = [
     # Estadísticas y salud
     path('dashboard/stats/', dashboard_stats, name='dashboard-stats'),
     path('health/', health_check, name='health-check'),
+    
+    # ONT - Vista de PostgreSQL
+    path('ont/info/', onu_info_view_list, name='ont-info-list'),
+    path('ont/stats/', onu_stats_by_olt, name='ont-stats'),
+    
+    # Futuras ejecuciones de workflows
+    path('workflows/future-executions/', future_executions_list, name='future-executions-list'),
     
     # Documentación de la API
     path('schema/', SpectacularAPIView.as_view(), name='schema'),

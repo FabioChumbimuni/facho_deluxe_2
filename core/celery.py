@@ -13,6 +13,13 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Cargar tareas automáticamente desde todos los archivos tasks.py registrados
 app.autodiscover_tasks()
 
+# Importar explícitamente módulos con tareas que no se llaman tasks.py
+# Esto asegura que las tareas se registren correctamente en Celery
+try:
+    import snmp_get.cleanup_tasks  # noqa: F401
+except ImportError:
+    pass  # El módulo puede no existir en algunos entornos
+
 # Configuración de colas optimizada (5 colas especializadas)
 app.conf.task_routes = {
     'snmp_jobs.tasks.discovery_main_task': {'queue': 'discovery_main'},

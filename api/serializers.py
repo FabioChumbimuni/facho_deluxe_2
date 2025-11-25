@@ -16,7 +16,7 @@ from snmp_formulas.models import IndexFormula
 from odf_management.models import ODF, ODFHilos, ZabbixPortData
 from personal.models import Personal, Area
 from zabbix_config.models import ZabbixConfiguration
-from configuracion_avanzada.models import ConfiguracionSistema
+from configuracion_avanzada.models import ConfiguracionSistema, ConfiguracionSNMP
 
 
 # ============================================================================
@@ -756,6 +756,9 @@ class WorkflowTemplateNodeSerializer(serializers.ModelSerializer):
     oid_id = serializers.IntegerField(write_only=True, required=False, allow_null=True, default=None)
     # Campo adicional para leer el ID del OID (para que el frontend pueda obtenerlo)
     oid_read_id = serializers.IntegerField(source='oid.id', read_only=True, allow_null=True)
+    master_node_id = serializers.IntegerField(source='master_node.id', read_only=True, allow_null=True)
+    master_node_name = serializers.CharField(source='master_node.name', read_only=True, allow_null=True)
+    chain_nodes_count = serializers.SerializerMethodField()
     
     class Meta:
         model = WorkflowTemplateNode
@@ -763,15 +766,26 @@ class WorkflowTemplateNodeSerializer(serializers.ModelSerializer):
                   'oid_espacio', 'oid_espacio_display',
                   'interval_seconds', 'priority', 'parameters', 'retry_policy', 
                   'enabled', 'position_x', 'position_y', 'color_override', 
-                  'icon_override', 'metadata', 'created_at', 'updated_at']
+                  'icon_override', 'metadata', 'is_chain_node', 'master_node', 'master_node_id', 
+                  'master_node_name', 'chain_nodes_count', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
         extra_kwargs = {
-            'oid': {'required': False, 'allow_null': True}
+            'oid': {'required': False, 'allow_null': True},
+            'master_node': {'required': False, 'allow_null': True}
         }
+    
+    def get_chain_nodes_count(self, obj):
+        """Obtener el número de nodos en la cadena"""
+        if obj.is_chain_node and obj.master_node:
+            return obj.master_node.chain_nodes.count()
+        elif not obj.is_chain_node:
+            return obj.chain_nodes.count()
+        return 0
     
     def create(self, validated_data):
         """Crear nodo con manejo de oid_id y validación de espacio único"""
         import logging
+        from snmp_jobs.models import WorkflowTemplateNode
         logger = logging.getLogger(__name__)
         
         # Obtener oid_id de validated_data o initial_data
@@ -820,13 +834,59 @@ class WorkflowTemplateNodeSerializer(serializers.ModelSerializer):
                              f'Los espacios deben ser únicos por plantilla.'
                 })
         
+        # Procesar master_node si viene como ID
+        master_node_id = None
+        if hasattr(self, 'initial_data') and 'master_node' in self.initial_data:
+            master_node_id = self.initial_data.get('master_node')
+        elif 'master_node' in validated_data:
+            master_node_id = validated_data.get('master_node')
+        
+        if master_node_id is not None:
+            try:
+                if isinstance(master_node_id, str):
+                    master_node_id = int(master_node_id) if master_node_id.strip() else None
+                
+                if master_node_id is not None and master_node_id != 0:
+                    template = validated_data.get('template')
+                    if template:
+                        master_node_instance = WorkflowTemplateNode.objects.get(id=master_node_id, template=template)
+                        validated_data['master_node'] = master_node_instance
+                        logger.info(f"✅ Master node asignado: {master_node_instance.id} - {master_node_instance.name}")
+                else:
+                    validated_data['master_node'] = None
+            except (WorkflowTemplateNode.DoesNotExist, ValueError, TypeError) as e:
+                logger.error(f"❌ Error procesando master_node {master_node_id}: {e}")
+                if isinstance(e, WorkflowTemplateNode.DoesNotExist):
+                    raise serializers.ValidationError({'master_node': f'Nodo master con id {master_node_id} no existe en esta plantilla'})
+                else:
+                    raise serializers.ValidationError({'master_node': f'Valor inválido para master_node: {master_node_id}'})
+        
+        # Si está en cadena, no establecer intervalo (se gestiona desde el master)
+        if validated_data.get('is_chain_node', False):
+            validated_data.pop('interval_seconds', None)
+        
         logger.info(f"📝 Datos finales para crear nodo: {list(validated_data.keys())}")
         logger.info(f"📝 OID final: {validated_data.get('oid')}")
-        return super().create(validated_data)
+        
+        # Crear el nodo
+        created_instance = super().create(validated_data)
+        
+        # Sincronizar cambios automáticamente si hay template_id
+        template_id = created_instance.template.id if created_instance.template else None
+        if template_id:
+            try:
+                from snmp_jobs.services.workflow_template_service import WorkflowTemplateService
+                WorkflowTemplateService.sync_template_changes(template_id)
+                logger.info(f"✅ Nodo de plantilla {created_instance.id} creado y sincronizado automáticamente")
+            except Exception as e:
+                logger.error(f"❌ Error sincronizando cambios de plantilla {template_id}: {e}", exc_info=True)
+        
+        return created_instance
     
     def update(self, instance, validated_data):
         """Actualizar nodo con manejo de oid_id"""
         import logging
+        from snmp_jobs.models import WorkflowTemplateNode
         logger = logging.getLogger(__name__)
         
         # IMPORTANTE: Verificar si oid_id viene en los datos ANTES de hacer pop
@@ -880,6 +940,36 @@ class WorkflowTemplateNodeSerializer(serializers.ModelSerializer):
                              f'Los espacios deben ser únicos por plantilla.'
                 })
         
+        # Procesar master_node si viene como ID
+        master_node_id = None
+        if 'master_node' in self.initial_data:
+            master_node_id = self.initial_data.get('master_node')
+        elif 'master_node' in validated_data:
+            master_node_id = validated_data.get('master_node')
+        
+        if master_node_id is not None:
+            try:
+                if isinstance(master_node_id, str):
+                    master_node_id = int(master_node_id) if master_node_id.strip() else None
+                
+                if master_node_id is not None and master_node_id != 0:
+                    master_node_instance = WorkflowTemplateNode.objects.get(id=master_node_id, template=instance.template)
+                    validated_data['master_node'] = master_node_instance
+                    logger.info(f"✅ Master node actualizado: {master_node_instance.id} - {master_node_instance.name}")
+                else:
+                    validated_data['master_node'] = None
+                    logger.info("⚠️ Master node establecido como None (removiendo de cadena)")
+            except (WorkflowTemplateNode.DoesNotExist, ValueError, TypeError) as e:
+                logger.error(f"❌ Error procesando master_node {master_node_id}: {e}")
+                if isinstance(e, WorkflowTemplateNode.DoesNotExist):
+                    raise serializers.ValidationError({'master_node': f'Nodo master con id {master_node_id} no existe en esta plantilla'})
+                else:
+                    raise serializers.ValidationError({'master_node': f'Valor inválido para master_node: {master_node_id}'})
+        
+        # Si está en cadena, no actualizar intervalo (se gestiona desde el master)
+        if validated_data.get('is_chain_node', False):
+            validated_data.pop('interval_seconds', None)
+        
         # No incluir template en la actualización si no viene en los datos
         validated_data.pop('template', None)
         logger.info(f"📝 Datos finales para actualizar nodo: {list(validated_data.keys())}")
@@ -930,17 +1020,31 @@ class OLTWorkflowSerializer(serializers.ModelSerializer):
     olt_abreviatura = serializers.CharField(source='olt.abreviatura', read_only=True)
     olt_ip = serializers.CharField(source='olt.ip_address', read_only=True)
     nodes_count = serializers.SerializerMethodField()
+    linked_templates = serializers.SerializerMethodField()
     
     class Meta:
         model = OLTWorkflow
         fields = ['id', 'olt', 'olt_id', 'olt_abreviatura', 'olt_ip',
                   'name', 'description', 'is_active', 'theme', 'layout',
-                  'nodes_count', 'created_at', 'updated_at']
+                  'nodes_count', 'linked_templates', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_nodes_count(self, obj):
         """Contar nodos del workflow"""
         return obj.nodes.count()
+
+    def get_linked_templates(self, obj):
+        """Listar plantillas vinculadas al workflow"""
+        links = obj.template_links.select_related('template').all()
+        return [
+            {
+                'id': link.template_id,
+                'name': link.template.name,
+                'auto_sync': link.auto_sync,
+                'linked_at': link.created_at,
+            }
+            for link in links
+        ]
 
 
 class ConfiguracionSistemaSerializer(serializers.ModelSerializer):
@@ -953,6 +1057,30 @@ class ConfiguracionSistemaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'fecha_creacion', 'fecha_modificacion']
 
 
+class ConfiguracionSNMPSerializer(serializers.ModelSerializer):
+    """Serializer para configuraciones SNMP"""
+    tipo_operacion_display = serializers.CharField(source='get_tipo_operacion_display', read_only=True)
+    version_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ConfiguracionSNMP
+        fields = ['id', 'nombre', 'tipo_operacion', 'tipo_operacion_display', 'timeout', 
+                  'reintentos', 'comunidad', 'version', 'version_display',
+                  'max_pollers_por_olt', 'tamano_lote_inicial', 'tamano_subdivision',
+                  'max_reintentos_individuales', 'delay_entre_reintentos',
+                  'max_consultas_snmp_simultaneas', 'activo', 'fecha_creacion', 'fecha_modificacion']
+        read_only_fields = ['id', 'fecha_creacion', 'fecha_modificacion']
+    
+    def get_version_display(self, obj):
+        """Retorna la versión SNMP formateada"""
+        version_map = {
+            '1': 'SNMPv1',
+            '2c': 'SNMPv2c',
+            '3': 'SNMPv3'
+        }
+        return version_map.get(obj.version, obj.version)
+
+
 class WorkflowNodeSerializer(serializers.ModelSerializer):
     """Serializer para nodos de workflow"""
     template_name = serializers.CharField(source='template.name', read_only=True)
@@ -960,6 +1088,12 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
     template_node_template_name = serializers.CharField(source='template_node.template.name', read_only=True, allow_null=True)
     is_executable = serializers.SerializerMethodField()
     execution_status = serializers.SerializerMethodField()
+    master_node_name = serializers.CharField(source='master_node.name', read_only=True, allow_null=True)
+    chain_nodes_count = serializers.SerializerMethodField()
+    
+    # Campo para recibir oid_id directamente desde el frontend
+    oid_id = serializers.IntegerField(write_only=True, required=False, allow_null=True, 
+                                      help_text="ID del OID para crear nodo independiente (sin plantilla)")
     
     class Meta:
         model = WorkflowNode
@@ -968,11 +1102,22 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
                   'template_node', 'template_node_id', 'template_node_template_name', 'key', 'name',
                   'interval_seconds', 'priority', 'parameters', 'retry_policy',
                   'enabled', 'is_executable', 'execution_status', 'position_x', 'position_y', 'color_override',
-                  'icon_override', 'metadata', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+                  'icon_override', 'metadata', 'created_at', 'updated_at',
+                  'is_chain_node', 'master_node', 'master_node_id', 'master_node_name', 'chain_nodes_count',
+                  'next_run_at', 'last_run_at', 'last_success_at', 'last_failure_at', 'oid', 'oid_id']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'next_run_at', 'last_run_at', 'last_success_at', 'last_failure_at']
         extra_kwargs = {
-            'template': {'required': False, 'allow_null': True}
+            'template': {'required': False, 'allow_null': True},
+            'master_node': {'required': False, 'allow_null': True}
         }
+    
+    def get_chain_nodes_count(self, obj):
+        """Obtener el número de nodos en la cadena"""
+        if obj.is_chain_node and obj.master_node:
+            return obj.master_node.get_chain_nodes().count()
+        elif not obj.is_chain_node:
+            return obj.get_chain_nodes().count()
+        return 0
     
     def get_is_executable(self, obj):
         """Verificar si el nodo puede ejecutarse según la lógica de activación en cascada"""
@@ -1000,11 +1145,50 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
         }
     
     def create(self, validated_data):
-        """Crear nodo con validación de espacio único y asignación automática de TaskTemplate"""
-        template_node = validated_data.get('template_node')
+        """Crear nodo simplificado: solo requiere key, oid_id e interval_seconds (si no es cadena)"""
+        from oids.models import OID
+        
         workflow = validated_data.get('workflow')
         template = validated_data.get('template')
         key = validated_data.get('key')
+        is_chain_node = validated_data.get('is_chain_node', False)
+        
+        # ✅ VALIDACIÓN: Key es obligatoria
+        if not key:
+            raise serializers.ValidationError({
+                'key': 'La key es obligatoria para identificar el nodo'
+            })
+        
+        # ✅ VALIDACIÓN: OID es obligatorio (puede venir de oid_id o template_node)
+        oid_id = validated_data.pop('oid_id', None)
+        oid_instance = None
+        
+        if oid_id:
+            try:
+                oid_instance = OID.objects.get(id=oid_id)
+                validated_data['oid'] = oid_instance
+            except OID.DoesNotExist:
+                raise serializers.ValidationError({
+                    'oid_id': f'OID con id {oid_id} no existe'
+                })
+        else:
+            # Si no viene oid_id, verificar si viene de template_node
+            template_node = validated_data.get('template_node')
+            if template_node and template_node.oid:
+                oid_instance = template_node.oid
+                validated_data['oid'] = oid_instance
+            else:
+                raise serializers.ValidationError({
+                    'oid_id': 'El OID es obligatorio. Proporcione oid_id o template_node con OID.'
+                })
+        
+        # ✅ VALIDACIÓN: Intervalo es obligatorio si NO es nodo en cadena
+        if not is_chain_node:
+            interval_seconds = validated_data.get('interval_seconds')
+            if not interval_seconds or interval_seconds <= 0:
+                raise serializers.ValidationError({
+                    'interval_seconds': 'El intervalo es obligatorio para nodos que no son de cadena'
+                })
         
         # Validar que la key no esté duplicada en el mismo workflow
         if key and workflow:
@@ -1019,6 +1203,7 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
                 })
         
         # Si no se proporciona template y hay template_node, usar el template del template_node
+        template_node = validated_data.get('template_node')
         if not template and template_node:
             template = template_node.template
         
@@ -1059,25 +1244,61 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
             logger.info(f"✅ TaskTemplate asignado automáticamente: {default_template.name} (ID: {default_template.id})")
         
         # Validar que no haya otro nodo con el mismo espacio en el workflow
-        if template_node and template_node.oid and template_node.oid.espacio and workflow:
+        if oid_instance and oid_instance.espacio and workflow:
             existing_node = WorkflowNode.objects.filter(
                 workflow=workflow,
-                template_node__oid__espacio=template_node.oid.espacio
+                oid__espacio=oid_instance.espacio
             ).exclude(id=self.instance.id if hasattr(self, 'instance') and self.instance else None).first()
             
             if existing_node:
                 raise serializers.ValidationError({
-                    'template_node': f'Ya existe un nodo con el espacio "{template_node.oid.get_espacio_display()}" en este workflow. '
-                                   f'Los espacios deben ser únicos por workflow.'
+                    'oid_id': f'Ya existe un nodo con el espacio "{oid_instance.get_espacio_display()}" en este workflow. '
+                             f'Los espacios deben ser únicos por workflow.'
                 })
         
         return super().create(validated_data)
     
     def update(self, instance, validated_data):
-        """Actualizar nodo con validación de espacio único y key única"""
-        template_node = validated_data.get('template_node', instance.template_node if instance else None)
+        """Actualizar nodo simplificado: solo requiere key, oid_id e interval_seconds (si no es cadena)"""
+        from oids.models import OID
+        
         workflow = validated_data.get('workflow', instance.workflow if instance else None)
         key = validated_data.get('key', instance.key if instance else None)
+        is_chain_node = validated_data.get('is_chain_node', instance.is_chain_node if instance else False)
+        
+        # ✅ VALIDACIÓN: OID es obligatorio (puede venir de oid_id o template_node)
+        oid_id = validated_data.pop('oid_id', None)
+        oid_instance = None
+        
+        if oid_id:
+            try:
+                oid_instance = OID.objects.get(id=oid_id)
+                validated_data['oid'] = oid_instance
+            except OID.DoesNotExist:
+                raise serializers.ValidationError({
+                    'oid_id': f'OID con id {oid_id} no existe'
+                })
+        else:
+            # Si no viene oid_id, verificar si viene de template_node o usar el existente
+            template_node = validated_data.get('template_node', instance.template_node if instance else None)
+            if template_node and template_node.oid:
+                oid_instance = template_node.oid
+                validated_data['oid'] = oid_instance
+            elif instance and instance.oid:
+                oid_instance = instance.oid
+                # Mantener el OID existente
+            else:
+                raise serializers.ValidationError({
+                    'oid_id': 'El OID es obligatorio. Proporcione oid_id o template_node con OID.'
+                })
+        
+        # ✅ VALIDACIÓN: Intervalo es obligatorio si NO es nodo en cadena
+        if not is_chain_node:
+            interval_seconds = validated_data.get('interval_seconds', instance.interval_seconds if instance else None)
+            if not interval_seconds or interval_seconds <= 0:
+                raise serializers.ValidationError({
+                    'interval_seconds': 'El intervalo es obligatorio para nodos que no son de cadena'
+                })
         
         # Validar que la key no esté duplicada en el mismo workflow (excluyendo el nodo actual)
         if key and workflow:
@@ -1092,16 +1313,16 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
                 })
         
         # Validar que no haya otro nodo con el mismo espacio en el workflow
-        if template_node and template_node.oid and template_node.oid.espacio and workflow:
+        if oid_instance and oid_instance.espacio and workflow:
             existing_node = WorkflowNode.objects.filter(
                 workflow=workflow,
-                template_node__oid__espacio=template_node.oid.espacio
+                oid__espacio=oid_instance.espacio
             ).exclude(id=instance.id if instance else None).first()
             
             if existing_node:
                 raise serializers.ValidationError({
-                    'template_node': f'Ya existe un nodo con el espacio "{template_node.oid.get_espacio_display()}" en este workflow. '
-                                   f'Los espacios deben ser únicos por workflow.'
+                    'oid_id': f'Ya existe un nodo con el espacio "{oid_instance.get_espacio_display()}" en este workflow. '
+                             f'Los espacios deben ser únicos por workflow.'
                 })
         
         return super().update(instance, validated_data)

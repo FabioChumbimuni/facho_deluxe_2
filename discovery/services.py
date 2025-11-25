@@ -276,6 +276,10 @@ class DiscoveryService:
             }
         )
         
+        # Detectar cambio de DISABLED a ENABLED (cliente que vuelve a aparecer)
+        was_disabled = onu_status.presence == 'DISABLED'
+        is_now_enabled = True  # Si aparece en walk, siempre será ENABLED
+        
         # Detectar cambio de estado
         state_changed = (
             onu_status.last_state_value != state_value or 
@@ -293,6 +297,34 @@ class DiscoveryService:
             onu_status.last_change_execution = self.execution
             
         onu_status.save()
+        
+        # IMPORTANTE: Si la ONU vuelve a aparecer (DISABLED → ENABLED), limpiar datos del inventario
+        if was_disabled and is_now_enabled:
+            try:
+                onu_inventory = OnuInventory.objects.get(onu_index=onu_index_map)
+                
+                # Limpiar campos del inventario cuando el cliente vuelve a aparecer
+                onu_inventory.serial_number = None
+                onu_inventory.mac_address = None
+                onu_inventory.subscriber_id = None
+                onu_inventory.snmp_metadata = {}
+                onu_inventory.distancia_onu = None
+                onu_inventory.modelo_onu = None
+                onu_inventory.plan_onu = None
+                onu_inventory.snmp_last_execution = None  # Limpiar referencia a ejecución anterior
+                
+                # Guardar cambios
+                onu_inventory.save(update_fields=[
+                    'serial_number', 'mac_address', 'subscriber_id', 
+                    'snmp_metadata', 'distancia_onu', 'modelo_onu', 
+                    'plan_onu', 'snmp_last_execution', 'updated_at'
+                ])
+                
+                self.logger.info(f"🧹 Datos de inventario limpiados (ONU volvió a aparecer): {onu_index_map.normalized_id}")
+                
+            except OnuInventory.DoesNotExist:
+                # No hay inventario, no hay problema
+                pass
         
         # Contabilizar
         if state_value == 1:  # ACTIVO

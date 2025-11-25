@@ -707,7 +707,8 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                                 task_name=job_name,
                                 task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
                                 duration_ms=completion_info.get('duration_ms', 0),
-                                status='SUCCESS'
+                                status='SUCCESS',
+                                execution_id=execution_obj.id  # ← NUEVO: Para actualizar WorkflowNode
                             )
                         except Exception as callback_error:
                             logger.warning(f"Error en callback coordinator (completed): {callback_error}")
@@ -802,12 +803,14 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             raise ValueError(f"Esta tarea no es de tipo GET: {job.job_type}")
         
         # 🧪 MODO PRUEBA GLOBAL: Verificar si el modo prueba está activo
+        # IMPORTANTE: Compatible con WorkflowNode (nuevo sistema independiente)
         from configuracion_avanzada.models import ConfiguracionSistema
         is_modo_prueba = ConfiguracionSistema.is_modo_prueba()
-        is_test_job = job.nombre.startswith('[PRUEBA]')
+        is_test_job = job and job.nombre.startswith('[PRUEBA]') if job else False
         
         if is_modo_prueba or is_test_job:
-            logger.info(f"🧪 MODO SIMULACIÓN: {job.nombre} - Simulando ejecución GET sin consultas SNMP reales")
+            job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
+            logger.info(f"🧪 MODO SIMULACIÓN: {job_name} - Simulando ejecución GET sin consultas SNMP reales")
             
             # IMPORTANTE: Actualizar estado a RUNNING antes de simular
             execution.status = 'RUNNING'
@@ -830,9 +833,16 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
                 presence='ENABLED'
             ).count()
             
-            # 80% éxito, 15% fallo, 5% interrumpido
+            # Obtener porcentajes configurables de simulación
+            from configuracion_avanzada.models import ConfiguracionSistema
+            porcentajes = ConfiguracionSistema.get_porcentajes_simulacion()
+            porcentaje_exito = porcentajes['porcentaje_exito'] / 100.0
+            porcentaje_fallo = porcentajes['porcentaje_fallo'] / 100.0
+            porcentaje_interrumpido = porcentajes['porcentaje_interrumpido'] / 100.0
+            
+            # Usar porcentajes configurables para determinar el resultado
             rand = random.random()
-            if rand < 0.80:
+            if rand < porcentaje_exito:
                 execution.status = 'SUCCESS'
                 success_count = random.randint(int(total_onus * 0.7), total_onus) if total_onus > 0 else random.randint(10, 100)
                 error_count = total_onus - success_count if total_onus > 0 else random.randint(0, 10)
@@ -844,7 +854,7 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
                     'duration_ms': int(simulation_duration * 1000)
                 }
                 execution.error_message = None
-            elif rand < 0.95:
+            elif rand < (porcentaje_exito + porcentaje_fallo):
                 execution.status = 'FAILED'
                 execution.error_message = 'Simulación: Error simulado en tarea GET de prueba'
                 execution.result_summary = {
@@ -871,6 +881,23 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             execution.save()
             
             logger.info(f"🧪 Simulación GET completada: {execution.status} en {execution.duration_ms}ms")
+            
+            # ✅ CRÍTICO: Llamar callback para actualizar WorkflowNode y ejecutar nodos en cadena
+            try:
+                from execution_coordinator.callbacks import on_task_completed
+                job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
+                
+                on_task_completed(
+                    olt_id=olt_id,
+                    task_name=job_name,
+                    task_type='get',
+                    duration_ms=execution.duration_ms or 0,
+                    status=execution.status,
+                    execution_id=execution.id
+                )
+            except Exception as callback_error:
+                logger.error(f"❌ Error en callback de simulación GET: {callback_error}")
+            
             return
         
         # Validar que el OID sea de tipo 'descripcion'

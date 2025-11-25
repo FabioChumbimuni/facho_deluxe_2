@@ -155,78 +155,150 @@ class WorkflowTemplateService:
             'nodes_linked': 0,
             'nodes_created': 0,
             'nodes_skipped': 0,
-            'nodes_incompatible': 0,
             'errors': [],
+            'workflow_ids': [],
         }
+        workflow_map = {}
         
+        # Crear workflows fuera de la transacción para asegurar que se creen siempre
+        for olt_id in olt_ids:
+            try:
+                olt = OLT.objects.select_related('marca', 'modelo').get(id=olt_id)
+                
+                # Crear o obtener workflow de la OLT (fuera de transacción para asegurar creación)
+                workflow, workflow_created = OLTWorkflow.objects.get_or_create(
+                    olt=olt,
+                    defaults={
+                        'name': f'Workflow SNMP - {olt.abreviatura}',
+                        'is_active': True,
+                    }
+                )
+                workflow_map[olt_id] = workflow
+                stats['workflow_ids'].append(workflow.id)
+                
+                if workflow_created:
+                    logger.info(f"✅ Workflow creado para OLT {olt.abreviatura} (ID: {workflow.id})")
+                else:
+                    logger.info(f"✅ Workflow existente para OLT {olt.abreviatura} (ID: {workflow.id})")
+                
+                # Crear o actualizar vinculación con la plantilla
+                link, link_created = WorkflowTemplateLink.objects.get_or_create(
+                    template=template,
+                    workflow=workflow,
+                    defaults={'auto_sync': auto_sync}
+                )
+                if not link_created:
+                    link.auto_sync = auto_sync
+                    link.save()
+                
+                logger.info(
+                    f"🔗 Vinculación creada/actualizada entre plantilla '{template.name}' "
+                    f"y workflow {workflow.id} (OLT: {olt.abreviatura})"
+                )
+                
+                # Marcar que el workflow se creó exitosamente
+                stats['olts_processed'] += 1
+                
+            except OLT.DoesNotExist:
+                error_msg = f"OLT ID {olt_id} no existe"
+                stats['errors'].append(error_msg)
+                logger.error(error_msg)
+            except Exception as e:
+                error_msg = f"Error creando workflow para OLT {olt_id}: {str(e)}"
+                stats['errors'].append(error_msg)
+                logger.error(error_msg, exc_info=True)
+        
+        # Procesar nodos dentro de transacción
         with transaction.atomic():
             for olt_id in olt_ids:
+                olt_processed = False
+                olt_stats = {
+                    'nodes_linked': 0,
+                    'nodes_created': 0,
+                }
+                
                 try:
-                    olt = OLT.objects.select_related('marca', 'modelo').get(id=olt_id)
+                    # Usar el workflow previamente creado/obtenido
+                    workflow = workflow_map.get(olt_id)
+                    if not workflow:
+                        olt = OLT.objects.select_related('marca', 'modelo').get(id=olt_id)
+                        workflow = OLTWorkflow.objects.filter(olt=olt).first()
                     
-                    # Crear o obtener workflow de la OLT
-                    workflow, created = OLTWorkflow.objects.get_or_create(
-                        olt=olt,
-                        defaults={
-                            'name': f'Workflow SNMP - {olt.abreviatura}',
-                            'is_active': True,
-                        }
-                    )
+                    if not workflow:
+                        error_msg = f"No se pudo obtener workflow para OLT {olt_id}"
+                        stats['errors'].append(error_msg)
+                        logger.error(error_msg)
+                        continue
                     
-                    # Crear o actualizar vinculación con la plantilla
-                    link, link_created = WorkflowTemplateLink.objects.get_or_create(
-                        template=template,
-                        workflow=workflow,
-                        defaults={'auto_sync': auto_sync}
-                    )
-                    if not link_created:
-                        link.auto_sync = auto_sync
-                        link.save()
-                    
-                    # Filtrar nodos compatibles con la OLT antes de procesarlos
-                    compatible_nodes = []
-                    incompatible_nodes = []
-                    
-                    for template_node in template_nodes:
-                        # Verificar compatibilidad del OID con la OLT
-                        if template_node.oid and _is_oid_compatible_with_olt(template_node.oid, olt):
-                            compatible_nodes.append(template_node)
-                        elif not template_node.oid:
-                            # Si no tiene OID, no es compatible (necesitamos OID para ejecutar)
-                            incompatible_nodes.append(template_node)
-                            logger.warning(
-                                f"⚠️ Nodo '{template_node.key}' sin OID - no compatible con OLT {olt.abreviatura}"
-                            )
-                        else:
-                            incompatible_nodes.append(template_node)
-                            logger.warning(
-                                f"⚠️ Nodo '{template_node.key}' con OID incompatible "
-                                f"(OID: {template_node.oid.marca.nombre}/{template_node.oid.modelo.nombre}, "
-                                f"OLT: {olt.marca.nombre}/{olt.modelo.nombre if olt.modelo else 'N/A'})"
+                    # Procesar TODOS los nodos sin restricciones de marca/modelo
+                    # Ordenar nodos: primero los masters (no están en cadena), luego los nodos en cadena
+                    # Esto asegura que cuando se procese un nodo en cadena, su master ya exista
+                    sorted_template_nodes = sorted(
+                        template_nodes,
+                        key=lambda n: (n.is_chain_node, n.priority if n.is_chain_node else 0)
                             )
                     
-                    # Procesar solo nodos compatibles
-                    for template_node in compatible_nodes:
+                    # Procesar todos los nodos (sin filtro de compatibilidad)
+                    for template_node in sorted_template_nodes:
                         result = WorkflowTemplateService._process_template_node(
                             workflow, template_node, create_custom_nodes
                         )
-                        stats[result['action']] += 1
+                        action = result['action']
+                        if action == 'nodes_linked':
+                            olt_stats['nodes_linked'] += 1
+                            stats['nodes_linked'] += 1
+                        elif action == 'nodes_created':
+                            olt_stats['nodes_created'] += 1
+                            stats['nodes_created'] += 1
+                        elif action == 'nodes_synced':
+                            # Contar como actualizado, no como creado
+                            stats['nodes_synced'] = stats.get('nodes_synced', 0) + 1
+                        else:
+                            stats['nodes_skipped'] += 1
                     
-                    # Contar nodos incompatibles
-                    stats['nodes_incompatible'] += len(incompatible_nodes)
+                    # Después de procesar todos los nodos, actualizar master_nodes de nodos en cadena
+                    # que no pudieron encontrar su master durante la creación
+                    for template_node in sorted_template_nodes:
+                        if template_node.is_chain_node and template_node.master_node:
+                            # Buscar nodos en cadena que no tienen master asignado
+                            chain_workflow_nodes = WorkflowNode.objects.filter(
+                                workflow=workflow,
+                                template_node=template_node,
+                                is_chain_node=True,
+                                master_node__isnull=True
+                            )
+                            
+                            for chain_node in chain_workflow_nodes:
+                                # Buscar el master_node correspondiente
+                                master_workflow_node = WorkflowNode.objects.filter(
+                                    workflow=workflow,
+                                    template_node=template_node.master_node
+                                ).first()
+                                
+                                if master_workflow_node:
+                                    chain_node.master_node = master_workflow_node
+                                    chain_node.save()
+                                    logger.info(
+                                        f"🔗 Master actualizado para nodo en cadena '{chain_node.key}' "
+                                        f"con master '{master_workflow_node.key}' en workflow {workflow.olt.abreviatura}"
+                                    )
                     
-                    stats['olts_processed'] += 1
+                    # El contador ya se incrementó cuando se creó el workflow
+                    # Solo registrar el resumen final
                     logger.info(
-                        f"✅ Plantilla '{template.name}' aplicada a OLT {olt.abreviatura}. "
-                        f"Vinculados: {stats['nodes_linked']}, Creados: {stats['nodes_created']}, "
-                        f"Incompatibles: {len(incompatible_nodes)}"
+                        f"✅ Plantilla '{template.name}' aplicada a OLT {olt.abreviatura} (ID: {olt_id}). "
+                        f"Workflow: {workflow.id}, Vinculados: {olt_stats['nodes_linked']}, "
+                        f"Creados: {olt_stats['nodes_created']}"
                     )
                     
                 except OLT.DoesNotExist:
-                    stats['errors'].append(f"OLT ID {olt_id} no existe")
+                    # Ya se manejó arriba, solo registrar
+                    logger.warning(f"⚠️ OLT {olt_id} no existe, saltando procesamiento de nodos")
                 except Exception as e:
-                    stats['errors'].append(f"Error en OLT ID {olt_id}: {str(e)}")
-                    logger.error(f"Error aplicando plantilla a OLT {olt_id}: {e}", exc_info=True)
+                    error_msg = f"Error procesando nodos para OLT {olt_id}: {str(e)}"
+                    stats['errors'].append(error_msg)
+                    logger.error(f"Error procesando nodos para OLT {olt_id}: {e}", exc_info=True)
+                    # El workflow ya se creó arriba, así que no revertir nada
         
         return stats
     
@@ -288,16 +360,8 @@ class WorkflowTemplateService:
                 f"en workflow {workflow.olt.abreviatura}"
             )
             
-            # Validar que el OID sea compatible con la OLT antes de crear
-            if template_node.oid:
-                if not _is_oid_compatible_with_olt(template_node.oid, workflow.olt):
-                    logger.warning(
-                        f"⚠️ Nodo '{template_node.key}' no compatible con OLT {workflow.olt.abreviatura}. "
-                        f"OID: {template_node.oid.marca.nombre}/{template_node.oid.modelo.nombre}, "
-                        f"OLT: {workflow.olt.marca.nombre}/{workflow.olt.modelo.nombre if workflow.olt.modelo else 'N/A'}"
-                    )
-                    return {'action': 'nodes_skipped'}
-            else:
+            # Verificar que tenga OID (necesario para ejecutar)
+            if not template_node.oid:
                 logger.warning(
                     f"⚠️ Nodo '{template_node.key}' sin OID - no se puede crear en workflow {workflow.olt.abreviatura}"
                 )
@@ -310,13 +374,28 @@ class WorkflowTemplateService:
                 logger.error(f"No se pudo encontrar TaskTemplate para OID {template_node.oid}")
                 return {'action': 'nodes_skipped'}
             
+            # ✅ CRÍTICO: Lógica de intervalos para nodos master vs encadenados
+            # - Los nodos MASTER: usan el intervalo definido en la plantilla
+            # - Los nodos ENCADENADOS: SIEMPRE interval_seconds = 0 (NO tienen intervalo propio)
+            #   Los nodos encadenados se ejecutan DESPUÉS del master según prioridad,
+            #   NO según intervalo. Se almacena 0 solo para satisfacer la columna NOT NULL.
+            if template_node.is_chain_node:
+                # ✅ FORZAR: Nodos encadenados SIEMPRE tienen intervalo 0
+                interval_seconds = 0
+            else:
+                # Nodos master: usar intervalo de la plantilla
+                interval_seconds = template_node.interval_seconds if template_node.interval_seconds is not None else 0
+            
+            node_metadata = template_node.metadata.copy() if template_node.metadata else {}
+            node_metadata['origin_template_id'] = template_node.template_id
+            
             new_node = WorkflowNode.objects.create(
                 workflow=workflow,
                 template=task_template,
                 template_node=template_node,
                 key=template_node.key,
                 name=template_node.name,
-                interval_seconds=template_node.interval_seconds,
+                interval_seconds=interval_seconds,
                 priority=template_node.priority,
                 enabled=template_node.enabled,
                 parameters=template_node.parameters.copy(),
@@ -325,21 +404,75 @@ class WorkflowTemplateService:
                 position_y=template_node.position_y,
                 color_override=template_node.color_override or '',
                 icon_override=template_node.icon_override or '',
-                metadata=template_node.metadata.copy(),
+                metadata=node_metadata,
+                is_chain_node=template_node.is_chain_node,
+                master_node=None,  # Se establecerá después si es necesario
                 # IMPORTANTE: Los campos override deben ser False por defecto para permitir sincronización
                 override_interval=False,
                 override_priority=False,
                 override_enabled=False,
                 override_parameters=False,
             )
-            logger.info(
-                f"✅ Nodo '{new_node.key}' creado desde plantilla '{template_node.template.name}' "
-                f"en workflow {workflow.olt.abreviatura} con intervalo {new_node.interval_seconds}s"
+            
+            # Si el template_node está en cadena, buscar el master_node correspondiente
+            if template_node.is_chain_node and template_node.master_node:
+                # Buscar el workflow_node correspondiente al master_node del template
+                master_workflow_node = WorkflowNode.objects.filter(
+                    workflow=workflow,
+                    template_node=template_node.master_node
+                ).first()
+                
+                if master_workflow_node:
+                    new_node.master_node = master_workflow_node
+                    new_node.save()
+                    logger.info(
+                        f"🔗 Nodo en cadena '{new_node.key}' creado con master "
+                        f"'{master_workflow_node.key}' en workflow {workflow.olt.abreviatura}"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ No se encontró master_node '{template_node.master_node.key}' "
+                        f"para nodo en cadena '{template_node.key}' en workflow {workflow.olt.abreviatura}. "
+                        f"El master se establecerá cuando esté disponible."
             )
+            
+            # ✅ CRÍTICO: Inicializar next_run_at SOLO para nodos MASTER
+            # - Nodos MASTER: tienen intervalo propio → inicializar next_run_at
+            # - Nodos ENCADENADOS: NO tienen intervalo → NO inicializar next_run_at
+            #   Los nodos encadenados se ejecutan cuando el master termine exitosamente
+            if new_node.enabled and not new_node.is_chain_node:
+                # ✅ SOLO nodos master: inicializar next_run_at con su intervalo
+                new_node.initialize_next_run()
+                new_node.save(update_fields=['next_run_at'])
+                logger.info(
+                    f"✅ Nodo MASTER '{new_node.key}' creado desde plantilla '{template_node.template.name}' "
+                    f"en workflow {workflow.olt.abreviatura} con intervalo {new_node.interval_seconds}s "
+                    f"(próxima ejecución: {new_node.next_run_at})"
+                )
+            elif new_node.is_chain_node:
+                # ✅ Nodos encadenados: NO inicializar next_run_at (dependen del master)
+                # Asegurar que next_run_at sea None y interval_seconds sea 0
+                if new_node.next_run_at is not None:
+                    new_node.next_run_at = None
+                if new_node.interval_seconds != 0:
+                    new_node.interval_seconds = 0
+                new_node.save(update_fields=['next_run_at', 'interval_seconds'])
+                master_info = f" (master: {new_node.master_node.key})" if new_node.master_node else " (master pendiente)"
+                logger.info(
+                    f"✅ Nodo ENCADENADO '{new_node.key}' creado desde plantilla '{template_node.template.name}' "
+                    f"en workflow {workflow.olt.abreviatura}{master_info} - "
+                    f"Se ejecutará después del master (sin intervalo propio)"
+                )
+            else:
+                logger.info(
+                    f"✅ Nodo '{new_node.key}' creado desde plantilla '{template_node.template.name}' "
+                    f"en workflow {workflow.olt.abreviatura} con intervalo {new_node.interval_seconds}s (deshabilitado)"
+                )
+            
             return {'action': 'nodes_created'}
     
     @staticmethod
-    def sync_template_changes(template_id):
+    def sync_template_changes(template_id, workflow_ids=None):
         """
         Sincroniza cambios de una plantilla a todos los workflows vinculados.
         La sincronización es automática: cuando cambia la plantilla, todos los workflows
@@ -350,23 +483,79 @@ class WorkflowTemplateService:
         
         Args:
             template_id: ID de la WorkflowTemplate
+            workflow_ids: Lista opcional de workflows específicos a sincronizar
         
         Returns:
             dict con estadísticas de sincronización
         """
         template = WorkflowTemplate.objects.get(id=template_id)
+        
         links = template.workflow_links.filter(auto_sync=True)
+        if workflow_ids:
+            links = links.filter(workflow_id__in=workflow_ids)
         
         stats = {
             'workflows_synced': 0,
             'nodes_synced': 0,
             'nodes_skipped': 0,
             'nodes_not_found': 0,
+            'nodes_deleted': 0,
         }
         
         for link in links:
             workflow = link.workflow
             template_nodes = template.template_nodes.all()
+            template_node_keys = set(template_nodes.values_list('key', flat=True))
+            template_node_ids = set(template_nodes.values_list('id', flat=True))
+            
+            # Eliminar nodos huérfanos: nodos vinculados a esta plantilla que ya no existen en la plantilla
+            # Método 1: Nodos que tienen template_node que apunta a un nodo que ya no existe en la plantilla
+            orphaned_by_template = WorkflowNode.objects.filter(
+                workflow=workflow,
+                template_node__template=template
+            ).exclude(
+                template_node__id__in=template_node_ids
+            )
+            
+            # Método 2: Nodos que tienen template_node=None (fueron eliminados y SET_NULL los puso en None)
+            # y tienen una key que no está en la plantilla actual
+            # Esto es más complejo porque necesitamos saber qué keys pertenecían a esta plantilla
+            # Por ahora, confiamos en que la señal post_delete maneje esto directamente
+            
+            # Método 3: Buscar nodos administrados por esta plantilla (metadata) cuya key ya no existe
+            orphaned_by_metadata = WorkflowNode.objects.filter(
+                workflow=workflow,
+                metadata__origin_template_id=template.id
+            ).exclude(
+                key__in=template_node_keys
+            )
+            
+            # Método 4: Nodos con template_node todavía apuntando a la plantilla pero cuya key ya no existe
+            orphaned_by_key = WorkflowNode.objects.filter(
+                workflow=workflow,
+                template_node__template=template
+            ).exclude(
+                key__in=template_node_keys
+            )
+            
+            # Combinar todos los métodos de detección
+            orphaned_node_ids = set(
+                list(orphaned_by_template.values_list('id', flat=True)) +
+                list(orphaned_by_metadata.values_list('id', flat=True)) +
+                list(orphaned_by_key.values_list('id', flat=True))
+            )
+            
+            if orphaned_node_ids:
+                orphaned_nodes = WorkflowNode.objects.filter(id__in=orphaned_node_ids)
+                orphaned_count = orphaned_nodes.count()
+                
+                if orphaned_count > 0:
+                    logger.info(
+                        f"🗑️ Eliminando {orphaned_count} nodo(s) huérfano(s) de workflow {workflow.olt.abreviatura} "
+                        f"(ya no existen en la plantilla)"
+                    )
+                    orphaned_nodes.delete()
+                    stats['nodes_deleted'] += orphaned_count
             
             for template_node in template_nodes:
                 # Buscar nodos vinculados a este template_node por template_node
@@ -393,11 +582,72 @@ class WorkflowTemplateService:
                         unique_nodes.append(node)
                 
                 if not unique_nodes:
-                    stats['nodes_not_found'] += 1
-                    logger.warning(
-                        f"⚠️ No se encontraron nodos vinculados para template_node '{template_node.key}' "
-                        f"en workflow {workflow.olt.abreviatura}"
-                    )
+                    # No existe nodo en el workflow para este template_node
+                    # Crear nuevo nodo desde la plantilla si auto_sync está activo
+                    if link.auto_sync:
+                        try:
+                            # Usar _process_template_node para crear el nodo correctamente
+                            result = WorkflowTemplateService._process_template_node(
+                                workflow, template_node, create_custom_nodes=True
+                            )
+                            
+                            if result['action'] == 'nodes_created':
+                                # Si se creó el nodo, buscar el nodo creado para establecer master si es necesario
+                                new_workflow_node = WorkflowNode.objects.filter(
+                                    workflow=workflow,
+                                    template_node=template_node
+                                ).first()
+                                
+                                if new_workflow_node:
+                                    # Si el template_node está en cadena, buscar el master_node correspondiente
+                                    if template_node.is_chain_node and template_node.master_node:
+                                        # Buscar el workflow_node correspondiente al master_node del template
+                                        master_workflow_node = WorkflowNode.objects.filter(
+                                            workflow=workflow,
+                                            template_node=template_node.master_node
+                                        ).first()
+                                        
+                                        if master_workflow_node:
+                                            new_workflow_node.master_node = master_workflow_node
+                                            new_workflow_node.is_chain_node = True
+                                            new_workflow_node.save()
+                                            logger.info(
+                                                f"🔗 Nodo en cadena '{new_workflow_node.key}' creado con master "
+                                                f"'{master_workflow_node.key}' en workflow {workflow.olt.abreviatura}"
+                                            )
+                                        else:
+                                            logger.warning(
+                                                f"⚠️ No se encontró master_node '{template_node.master_node.key}' "
+                                                f"para nodo en cadena '{template_node.key}' en workflow {workflow.olt.abreviatura}"
+                                            )
+                                    
+                                    stats['nodes_synced'] += 1
+                                    logger.info(
+                                        f"✅ Nuevo nodo '{template_node.key}' creado desde plantilla "
+                                        f"en workflow {workflow.olt.abreviatura}"
+                                    )
+                                else:
+                                    stats['nodes_not_found'] += 1
+                            elif result['action'] == 'nodes_skipped':
+                                stats['nodes_not_found'] += 1
+                                logger.warning(
+                                    f"⚠️ Nodo '{template_node.key}' no se pudo crear en workflow {workflow.olt.abreviatura} "
+                                    f"(sin OID o error al crear)"
+                                )
+                            else:
+                                stats['nodes_not_found'] += 1
+                        except Exception as e:
+                            logger.error(
+                                f"❌ Error creando nodo '{template_node.key}' en workflow {workflow.olt.abreviatura}: {e}",
+                                exc_info=True
+                            )
+                            stats['nodes_not_found'] += 1
+                    else:
+                        stats['nodes_not_found'] += 1
+                        logger.info(
+                            f"ℹ️ Nodo '{template_node.key}' no encontrado en workflow {workflow.olt.abreviatura} "
+                            f"y auto_sync está desactivado"
+                        )
                     continue
                 
                 for workflow_node in unique_nodes:
@@ -408,6 +658,13 @@ class WorkflowTemplateService:
                             f"🔗 Nodo '{workflow_node.key}' vinculado a template_node '{template_node.key}' "
                             f"en workflow {workflow.olt.abreviatura}"
                         )
+                    
+                    # Garantizar metadata de origen plantilla
+                    metadata = workflow_node.metadata or {}
+                    if metadata.get('origin_template_id') != template.id:
+                        metadata['origin_template_id'] = template.id
+                        workflow_node.metadata = metadata
+                        workflow_node.save(update_fields=['metadata'])
                     
                     # Sincronizar solo si auto_sync está activo
                     if link.auto_sync:
@@ -436,8 +693,8 @@ class WorkflowTemplateService:
         
         logger.info(
             f"✅ Plantilla '{template.name}' sincronizada: "
-            f"{stats['workflows_synced']} workflows, {stats['nodes_synced']} nodos actualizados, "
-            f"{stats['nodes_not_found']} nodos no encontrados"
+            f"{stats['workflows_synced']} workflows, {stats['nodes_synced']} nodos actualizados/creados, "
+            f"{stats['nodes_deleted']} nodos eliminados, {stats['nodes_not_found']} nodos no encontrados"
         )
         
         return stats
