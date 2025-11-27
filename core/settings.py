@@ -58,7 +58,8 @@ INSTALLED_APPS = [
     "hosts",
     "snmp_jobs",
     "executions",
-    "execution_coordinator",
+    "execution_coordinator",  # Mantener solo para modelos de BD (CoordinatorLog, CoordinatorEvent)
+    "execution_utils",  # Utilidades de ejecución (callbacks, eventos, logging)
     "discovery",
     "brands",
     "oids",
@@ -69,6 +70,7 @@ INSTALLED_APPS = [
     "snmp_formulas",
     "olt_models",
     "zabbix_config",
+    "zabbix_pollers",  # Sistema de Pollers Zabbix (reemplaza coordinador)
     "api",  # App de la REST API
 ]
 
@@ -191,10 +193,10 @@ CELERY_TASK_ROUTES = {
     # Tareas de limpieza GET
     'snmp_get.cleanup_tasks.cleanup_interrupted_executions': {'queue': 'cleanup'},
     'snmp_get.cleanup_tasks.cancel_pending_executions_for_disabled_jobs': {'queue': 'cleanup'},
-    # Tareas del Coordinator (NUEVO)
-    'execution_coordinator.tasks.coordinator_loop_task': {'queue': 'coordinator'},
-    'execution_coordinator.tasks.cleanup_old_coordinator_logs_task': {'queue': 'cleanup'},
-    'execution_coordinator.tasks.check_quota_violations_task': {'queue': 'coordinator'},
+    # ✅ DESHABILITADO: Tareas del coordinador antiguo ya no son necesarias con el sistema de pollers Zabbix
+    # 'execution_coordinator.tasks.coordinator_loop_task': {'queue': 'coordinator'},
+    # 'execution_coordinator.tasks.cleanup_old_coordinator_logs_task': {'queue': 'cleanup'},
+    # 'execution_coordinator.tasks.check_quota_violations_task': {'queue': 'coordinator'},
 }
 
 # Configuración de workers
@@ -219,32 +221,46 @@ CELERY_BEAT_SCHEDULE = {
     #     'task': 'snmp_jobs.tasks.dispatcher_check_and_enqueue',
     #     'schedule': 10.0,
     # },
-    'coordinator-loop': {
-        'task': 'execution_coordinator.tasks.coordinator_loop_task',
-        'schedule': 5.0,  # Cada 5 segundos - loop continuo del coordinator
+    # DESACTIVADO: Reemplazado por zabbix-scheduler
+    # 'coordinator-loop': {
+    #     'task': 'execution_coordinator.tasks.coordinator_loop_task',
+    #     'schedule': 5.0,  # Cada 5 segundos - loop continuo del coordinator
+    #     'options': {
+    #         'queue': 'coordinator',
+    #         'expires': 4.0,  # Expira antes del siguiente
+    #     }
+    # },
+    'zabbix-scheduler': {
+        'task': 'zabbix_pollers.tasks.zabbix_scheduler_loop_task',
+        'schedule': 1.0,  # Cada 1 segundo - loop del scheduler Zabbix
         'options': {
-            'queue': 'coordinator',
-            'expires': 4.0,  # Expira antes del siguiente
+            'queue': 'zabbix_scheduler',
+            'expires': 0.5,  # Expira antes del siguiente
         }
     },
-    'check-delivery': {
-        'task': 'execution_coordinator.tasks.check_delivery_task',
-        'schedule': 30.0,  # Cada 30 segundos - verificar que tareas fueron entregadas a Celery
-        'options': {
-            'queue': 'coordinator',
-            'expires': 25.0,  # Expira antes del siguiente
-        }
-    },
-    'check-quota-violations': {
-        'task': 'execution_coordinator.tasks.check_quota_violations_task',
-        'schedule': 3600.0,  # Cada hora - verificar violaciones de cuota
-        'options': {'queue': 'coordinator'}
-    },
-    'cleanup-coordinator-logs': {
-        'task': 'execution_coordinator.tasks.cleanup_old_coordinator_logs_task',
-        'schedule': 86400.0,  # Una vez al día - limpiar logs antiguos del coordinator
-        'options': {'queue': 'coordinator'}
-    },
+    # ✅ DESHABILITADO: check_delivery_task ya no es necesario con el sistema de pollers Zabbix
+    # El sistema de pollers Zabbix crea las ejecuciones inmediatamente en la BD y usa locks de Redis
+    # para evitar pérdidas. El delivery_checker estaba marcando tareas como INTERRUPTED incorrectamente
+    # cuando las tareas ya habían terminado en Celery.
+    # 'check-delivery': {
+    #     'task': 'execution_coordinator.tasks.check_delivery_task',
+    #     'schedule': 30.0,  # Cada 30 segundos - verificar que tareas fueron entregadas a Celery
+    #     'options': {
+    #         'queue': 'coordinator',
+    #         'expires': 25.0,  # Expira antes del siguiente
+    #     }
+    # },
+    # ✅ DESHABILITADO: Tareas del coordinador antiguo ya no son necesarias con el sistema de pollers Zabbix
+    # 'check-quota-violations': {
+    #     'task': 'execution_coordinator.tasks.check_quota_violations_task',
+    #     'schedule': 3600.0,  # Cada hora - verificar violaciones de cuota
+    #     'options': {'queue': 'coordinator'}
+    # },
+    # 'cleanup-coordinator-logs': {
+    #     'task': 'execution_coordinator.tasks.cleanup_old_coordinator_logs_task',
+    #     'schedule': 86400.0,  # Una vez al día - limpiar logs antiguos del coordinator
+    #     'options': {'queue': 'coordinator'}
+    # },
     'odf-scheduled-collection': {
         'task': 'odf_management.tasks.sync_scheduled_olts',
         'schedule': 60.0,  # Cada minuto - verifica programaciones de ODF
@@ -334,6 +350,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/hour',
         'user': '1000/hour',
+        'monitoring': '300/minute',  # Para endpoints de monitoreo (pollers, stats, queue)
+        'high_frequency_monitoring': '600/minute',  # Para monitoreo de alta frecuencia
     },
     
     # Formato de fecha/hora
