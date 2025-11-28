@@ -650,7 +650,7 @@ class OnuStateLookupViewSet(viewsets.ReadOnlyModelViewSet):
 )
 class OIDViewSet(viewsets.ModelViewSet):
     """ViewSet para OIDs SNMP"""
-    queryset = OID.objects.all()
+    queryset = OID.objects.all().order_by('id')  # ✅ Ordenamiento explícito para evitar warning de paginación
     serializer_class = OIDSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, DjangoFilterBackend, filters.OrderingFilter]
