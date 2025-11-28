@@ -1,0 +1,115 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* ===== TEMA CLARO - Estilos del botón de restaurar ===== */
+    .olt-restore-wrapper {
+        background-color: #fff3cd !important;
+        border: 2px solid #ffc107 !important;
+        padding: 15px !important;
+        margin-top: 10px !important;
+        border-radius: 4px !important;
+        text-align: center !important;
+    }
+    
+    .olt-restore-wrapper strong {
+        color: #856404 !important;
+        display: block !important;
+        margin-bottom: 10px !important;
+    }
+    
+    .olt-restore-wrapper p {
+        color: #856404 !important;
+        margin: 5px 0 !important;
+    }
+    
+    .olt-restore-button {
+        background-color: #28a745 !important;
+        color: white !important;
+        padding: 10px 20px !important;
+        text-decoration: none !important;
+        border-radius: 4px !important;
+        display: inline-block !important;
+        border: none !important;
+        cursor: pointer !important;
+        font-size: 14px !important;
+        transition: background-color 0.3s ease !important;
+    }
+    
+    .olt-restore-button:hover {
+        background-color: #218838 !important;
+        color: white !important;
+        text-decoration: none !important;
+    }
+
+    /* ===== TEMA OSCURO - Estilos del botón de restaurar ===== */
+    @media (prefers-color-scheme: dark) {
+        .olt-restore-wrapper {
+            background-color: #583305 !important;
+            border-color: #ff9800 !important;
+        }
+        
+        .olt-restore-wrapper strong {
+            color: #ffc107 !important;
+        }
+        
+        .olt-restore-wrapper p {
+            color: #ffc107 !important;
+        }
+        
+        .olt-restore-button {
+            background-color: #4caf50 !important;
+        }
+        
+        .olt-restore-button:hover {
+            background-color: #45a049 !important;
+        }
+    }
+
+    html[data-theme="dark"] .olt-restore-wrapper,
+    .dark-theme .olt-restore-wrapper {
+        background-color: #583305 !important;
+        border-color: #ff9800 !important;
+    }
+    
+    html[data-theme="dark"] .olt-restore-wrapper strong,
+    .dark-theme .olt-restore-wrapper strong {
+        color: #ffc107 !important;
+    }
+    
+    html[data-theme="dark"] .olt-restore-wrapper p,
+    .dark-theme .olt-restore-wrapper p {
+        color: #ffc107 !important;
+    }
+    
+    html[data-theme="dark"] .olt-restore-button,
+    .dark-theme .olt-restore-button {
+        background-color: #4caf50 !important;
+    }
+    
+    html[data-theme="dark"] .olt-restore-button:hover,
+    .dark-theme .olt-restore-button:hover {
+        background-color: #45a049 !important;
+    }
+</style>
+{% endblock %}
+
+{% block submit_buttons_bottom %}
+{{ block.super }}
+{% if is_deleted and restore_url %}
+<div class="submit-row olt-restore-wrapper">
+    <div style="margin-bottom: 15px;">
+        <strong>⚠️ Esta OLT está eliminada</strong>
+        <p>Para restaurarla y hacerla visible nuevamente en el sistema, haga clic en el botón de abajo.</p>
+    </div>
+    <div style="text-align: center;">
+        <a href="{{ restore_url }}" class="button olt-restore-button">
+            🔄 Restaurar OLT
+        </a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+

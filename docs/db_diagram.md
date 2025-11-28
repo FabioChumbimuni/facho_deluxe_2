@@ -5,6 +5,15 @@
 // NOTA: Este diagrama incluye solo las tablas personalizadas del proyecto.
 // Las tablas estándar de Django (auth_user, django_session, etc.) no están incluidas
 // pero son referenciadas en las relaciones ForeignKey.
+
+// ✅ ACTUALIZACIÓN 2025-11-28: Tabla OLT ahora incluye soporte para SOFT DELETE
+// - Campos agregados: is_deleted, deleted_at, deleted_by_id, deletion_reason
+// - Timestamps: created_at, updated_at
+// - Constraint único condicional: abreviatura única solo si is_deleted=false
+//   (permite recrear OLTs con la misma abreviatura después de eliminar una)
+// - Índices optimizados para consultas de OLTs activas
+// - Con soft delete, las relaciones CASCADE no se ejecutan (solo se marca is_deleted=true)
+// - Los nodos y ejecuciones NO se ven afectados por soft delete
 Table marcas {
   id int [pk]
   nombre varchar(255) [not null, unique]
@@ -21,7 +30,32 @@ Table olt {
   habilitar_olt boolean [default: true]
   comunidad_snmp varchar(255)
 
-  Note: 'habilitar_olt indica si la OLT está disponible para consultas SNMP. modelo_id permite especificar fórmulas de cálculo de índice por modelo específico'
+  // ✅ SOFT DELETE - Campos agregados para soporte de eliminación suave
+  is_deleted boolean [default: false, note: "Indica si la OLT está eliminada (soft delete)"]
+  deleted_at timestamp [null, note: "Fecha y hora de eliminación"]
+  deleted_by_id int [null, note: "FK a auth_user. Usuario que eliminó la OLT"]
+  deletion_reason text [null, note: "Razón de la eliminación"]
+  
+  // ✅ TIMESTAMPS
+  created_at timestamp [default: `now()`, note: "Fecha de creación"]
+  updated_at timestamp [default: `now()`, note: "Fecha de última actualización"]
+
+  Note: 'habilitar_olt indica si la OLT está disponible para consultas SNMP. modelo_id permite especificar fórmulas de cálculo de índice por modelo específico. Soporta soft delete: is_deleted permite "eliminar" OLTs sin borrarlas físicamente, permitiendo restaurarlas y crear nuevas con la misma abreviatura.'
+  
+  Indexes {
+    (is_deleted, habilitar_olt) [name: 'olt_active_idx']
+    (abreviatura, is_deleted) [name: 'olt_abrev_unique_idx']
+    (marca_id, is_deleted) [name: 'olt_marca_active_idx']
+    ip_address [name: 'olt_ip_idx']
+  }
+  
+  Constraints {
+    unique_abreviatura_when_not_deleted: {
+      fields: abreviatura
+      condition: is_deleted = false
+      note: "Abreviatura única solo si la OLT no está eliminada"
+    }
+  }
 }
 
 Table olt_models {
@@ -439,12 +473,12 @@ Ref: index_formulas.modelo_id > olt_models.id
 // Relaciones de tareas SNMP
 Ref: snmp_jobs.oid_id > oids.id [delete: restrict] // Una tarea debe tener un OID
 Ref: snmp_job_hosts.snmp_job_id > snmp_jobs.id [delete: cascade] // Si se elimina la tarea, se eliminan sus relaciones con OLTs
-Ref: snmp_job_hosts.olt_id > olt.id [delete: cascade] // Si se elimina una OLT, se eliminan sus relaciones con tareas
+Ref: snmp_job_hosts.olt_id > olt.id [delete: cascade] // Si se elimina una OLT físicamente, se eliminan sus relaciones con tareas. Con soft delete (is_deleted=true) las relaciones se mantienen intactas.
 
 // Relaciones de ejecuciones
 Ref: snmp_executions.snmp_job_id > snmp_jobs.id [delete: set null] // Si se elimina la tarea, mantener el historial
 Ref: snmp_executions.job_host_id > snmp_job_hosts.id [delete: set null] // Si se elimina la relación tarea-OLT, mantener el historial
-Ref: snmp_executions.olt_id > olt.id [delete: set null] // Si se elimina la OLT, mantener el historial
+Ref: snmp_executions.olt_id > olt.id [delete: set null] // Si se elimina la OLT físicamente, mantener el historial. Con soft delete (is_deleted=true) el historial se conserva completo.
 Ref: snmp_executions.workflow_node_id > snmp_workflow_nodes.id [delete: set null] // Si se elimina el nodo de workflow, mantener el historial
 
 // Relaciones de workflows
@@ -453,7 +487,7 @@ Ref: snmp_workflow_template_nodes.template_id > snmp_workflow_templates.id [dele
 Ref: snmp_workflow_template_nodes.oid_id > oids.id [delete: protect] // No eliminar OID si está en uso
 Ref: snmp_workflow_template_links.template_id > snmp_workflow_templates.id [delete: cascade] // Si se elimina plantilla, se eliminan los links
 Ref: snmp_workflow_template_links.workflow_id > snmp_olt_workflows.id [delete: cascade] // Si se elimina workflow, se eliminan los links
-Ref: snmp_olt_workflows.olt_id > olt.id [delete: cascade] // Si se elimina OLT, se elimina su workflow
+Ref: snmp_olt_workflows.olt_id > olt.id [delete: cascade] // Si se elimina OLT físicamente, se elimina su workflow. Con soft delete (is_deleted=true) el workflow se mantiene pero no aparece en listados activos.
 Ref: snmp_workflow_nodes.workflow_id > snmp_olt_workflows.id [delete: cascade] // Si se elimina workflow, se eliminan sus nodos
 Ref: snmp_workflow_nodes.template_id > snmp_task_templates.id [delete: protect] // No eliminar template si está en uso
 Ref: snmp_workflow_nodes.template_node_id > snmp_workflow_template_nodes.id [delete: set null] // Si se elimina nodo de plantilla, mantener nodo de workflow

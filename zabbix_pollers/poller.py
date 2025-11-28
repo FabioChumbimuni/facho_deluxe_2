@@ -184,16 +184,16 @@ class Poller:
                     logger.debug(f"Error en consulta JSON para poller {self.poller_id}: {json_error}")
             except Exception as e:
                 logger.debug(f"Error buscando ejecuciones activas para poller {self.poller_id}: {e}")
-        
+            
         # Retornar estadísticas (tanto para quick_mode como para modo detallado)
-        return {
-            'poller_id': self.poller_id,
+            return {
+                'poller_id': self.poller_id,
             'status': actual_status,  # Estado actual en tiempo real
-            'busy_percentage': busy_pct,
-            'tasks_completed': self.tasks_completed,
-            'tasks_delayed': self.tasks_delayed,
+                'busy_percentage': busy_pct,
+                'tasks_completed': self.tasks_completed,
+                'tasks_delayed': self.tasks_delayed,
             'current_node_id': current_node_id,
             'current_node_name': current_node_name,
             'current_execution_id': active_execution.id if active_execution else None,  # Agregar para referencia
-        }
+            }
 

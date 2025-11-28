@@ -11,8 +11,8 @@ from django.core.cache import cache
 from django.db import transaction
 from easysnmp import Session, EasySNMPTimeoutError, EasySNMPConnectionError
 
-from execution_coordinator.event_utils import create_execution_event
-from execution_coordinator.logger import coordinator_logger
+from execution_utils.event_utils import create_execution_event
+from execution_utils.logger import coordinator_logger
 
 logger = logging.getLogger(__name__)
 
@@ -701,7 +701,7 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                             details=summary_details,
                         )
                         try:
-                            from execution_coordinator.callbacks import on_task_completed
+                            from execution_utils.callbacks import on_task_completed
                             on_task_completed(
                                 olt_id=execution_obj.olt_id,
                                 task_name=job_name,
@@ -720,12 +720,13 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                             details=summary_details,
                         )
                         try:
-                            from execution_coordinator.callbacks import on_task_failed
+                            from execution_utils.callbacks import on_task_failed
                             on_task_failed(
                                 olt_id=execution_obj.olt_id,
                                 task_name=job_name,
                                 task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
-                                error_message=reason or 'Errores en pollers GET'
+                                error_message=reason or 'Errores en pollers GET',
+                                execution_id=execution_obj.id
                             )
                         except Exception as callback_error:
                             logger.warning(f"Error en callback coordinator (failed): {callback_error}")
@@ -884,7 +885,7 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
             
             # ✅ CRÍTICO: Llamar callback para actualizar WorkflowNode y ejecutar nodos en cadena
             try:
-                from execution_coordinator.callbacks import on_task_completed
+                from execution_utils.callbacks import on_task_completed
                 job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
                 
                 on_task_completed(
@@ -1129,12 +1130,13 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         
         # CALLBACK AL COORDINATOR: Notificar que GET falló
         try:
-            from execution_coordinator.callbacks import on_task_failed
+            from execution_utils.callbacks import on_task_failed
             on_task_failed(
                 olt_id=olt_id,
                 task_name=job.nombre,
                 task_type=job.job_type,
-                error_message=str(e)
+                error_message=str(e),
+                execution_id=execution_id if 'execution_id' in locals() else None
             )
         except Exception as callback_error:
             logger.warning(f"Error en callback coordinator: {callback_error}")

@@ -1007,12 +1007,27 @@ class WorkflowTemplateSerializer(serializers.ModelSerializer):
     
     def get_nodes_count(self, obj):
         """Contar nodos de la plantilla"""
-        return obj.template_nodes.count()
+        # Verificar si el objeto tiene pk antes de acceder a relaciones
+        # Durante la creación, el objeto aún no tiene pk
+        if not obj or not hasattr(obj, 'pk') or obj.pk is None:
+            return 0
+        try:
+            return obj.template_nodes.count()
+        except (AttributeError, ValueError):
+            return 0
     
     def get_assigned_olts_count(self, obj):
         """Contar OLTs asignadas a la plantilla (solo OLTs habilitadas)"""
+        # Verificar si el objeto tiene pk antes de acceder a relaciones
+        # Durante la creación, el objeto aún no tiene pk
+        if not obj or not hasattr(obj, 'pk') or obj.pk is None:
+            return 0
         # Usar el método olts_count del modelo que filtra solo OLTs habilitadas
-        return obj.olts_count
+        try:
+            return obj.olts_count
+        except (AttributeError, ValueError):
+            # Si el objeto no tiene pk o no puede acceder a la relación, retornar 0
+            return 0
 
 
 class OLTWorkflowSerializer(serializers.ModelSerializer):

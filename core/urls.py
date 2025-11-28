@@ -26,7 +26,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('snmp_jobs/', include('snmp_jobs.urls')),
     path('configuracion/', include('configuracion_avanzada.urls')),
-    path('coordinator/', include('execution_coordinator.urls')),
+    # ✅ DESHABILITADO: Dashboard del coordinador antiguo ya no es necesario con el sistema de pollers Zabbix
+    # path('coordinator/', include('execution_coordinator.urls')),
     # API REST
     path('api/v1/', include('api.urls')),
 ]

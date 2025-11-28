@@ -2,7 +2,8 @@ from typing import Optional, Dict, Any
 
 from django.db import transaction
 
-from .models import CoordinatorEvent
+# Importar desde execution_coordinator.models porque los modelos deben mantenerse en la BD
+from execution_coordinator.models import CoordinatorEvent
 
 
 def create_execution_event(

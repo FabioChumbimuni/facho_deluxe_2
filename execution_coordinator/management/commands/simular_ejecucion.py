@@ -19,9 +19,10 @@ from django.db import transaction
 from hosts.models import OLT
 from snmp_jobs.models import SnmpJobHost
 from executions.models import Execution
-from execution_coordinator.coordinator import ExecutionCoordinator
-from execution_coordinator.dynamic_scheduler import DynamicScheduler
-from execution_coordinator.logger import coordinator_logger
+# ✅ DESHABILITADO: ExecutionCoordinator y DynamicScheduler ya no se usan
+# from execution_coordinator.coordinator import ExecutionCoordinator
+# from execution_coordinator.dynamic_scheduler import DynamicScheduler
+from execution_utils.logger import coordinator_logger  # Se mantiene porque se usa en callbacks
 from execution_coordinator.models import CoordinatorLog, CoordinatorEvent
 
 
@@ -117,8 +118,14 @@ class Command(BaseCommand):
         self._print_separator()
 
         # Inicializar coordinador y scheduler
-        coordinator = ExecutionCoordinator(olt_id)
-        scheduler = DynamicScheduler(olt_id)
+        # ✅ DESHABILITADO: ExecutionCoordinator y DynamicScheduler ya no se usan
+        # coordinator = ExecutionCoordinator(olt_id)
+        # scheduler = DynamicScheduler(olt_id)
+        self.stdout.write(self.style.WARNING(
+            "⚠️ Este comando está deshabilitado. El sistema de pollers Zabbix reemplaza "
+            "completamente el coordinador antiguo. Usa el sistema de pollers Zabbix en su lugar."
+        ))
+        return
 
         # Historial de eventos
         historial = []

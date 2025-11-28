@@ -12,6 +12,8 @@ from django.contrib.auth.models import User
 from django.db.models import Count, Q
 from django.db import connection
 from django.utils import timezone
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError
 from datetime import datetime, timedelta
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
@@ -145,7 +147,8 @@ class OLTModelViewSet(viewsets.ModelViewSet):
     destroy=extend_schema(description="Eliminar OLT"),
 )
 class OLTViewSet(viewsets.ModelViewSet):
-    """ViewSet para OLTs"""
+    """ViewSet para OLTs (excluye eliminadas por defecto)"""
+    # ✅ Usar manager personalizado que excluye eliminadas automáticamente
     queryset = OLT.objects.select_related('marca', 'modelo').all()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -222,6 +225,69 @@ class OLTViewSet(viewsets.ModelViewSet):
             {'error': 'Se requiere el parámetro "habilitar"'},
             status=status.HTTP_400_BAD_REQUEST
         )
+    
+    @extend_schema(
+        description="Eliminar OLT de forma suave (soft delete)",
+        request={'application/json': {
+            'type': 'object',
+            'properties': {
+                'reason': {'type': 'string', 'description': 'Razón de la eliminación'}
+            }
+        }},
+        responses={200: {'description': 'OLT eliminada exitosamente'}}
+    )
+    def destroy(self, request, *args, **kwargs):
+        """Soft delete: marca la OLT como eliminada en lugar de borrarla físicamente"""
+        olt = self.get_object()
+        reason = request.data.get('reason', 'Eliminación desde API')
+        
+        # Usar soft_delete en lugar de borrado físico
+        olt.soft_delete(user=request.user, reason=reason)
+        
+        # Abortar ejecuciones PENDING para esta OLT
+        from snmp_jobs.models import SnmpJob
+        aborted_count = SnmpJob.abort_pending_executions_for_olt(
+            olt.id,
+            f"OLT {olt.abreviatura} eliminada (soft delete)"
+        )
+        
+        return Response({
+            'message': f'OLT "{olt.abreviatura}" eliminada exitosamente',
+            'abreviatura': olt.abreviatura,
+            'executions_aborted': aborted_count
+        }, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        description="Restaurar una OLT eliminada (undo soft delete)",
+        responses={200: OLTSerializer}
+    )
+    @action(detail=True, methods=['post'], url_path='restore')
+    def restore(self, request, pk=None):
+        """Restaurar una OLT eliminada (renombra automáticamente si hay conflicto)"""
+        # Obtener desde all_objects para incluir eliminadas
+        try:
+            olt = OLT.all_objects.get(pk=pk, is_deleted=True)
+        except OLT.DoesNotExist:
+            return Response(
+                {'error': 'OLT no encontrada o no está eliminada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Restaurar con renombrado automático si hay conflicto
+            restore_info = olt.restore(user=request.user, rename_on_conflict=True)
+            serializer = self.get_serializer(olt)
+            
+            # Incluir información sobre el renombrado en la respuesta
+            response_data = serializer.data
+            response_data['restore_info'] = restore_info
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 # ============================================================================
@@ -268,14 +334,6 @@ class SNMPJobViewSet(viewsets.ModelViewSet):
 )
 class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet para ejecuciones (solo lectura)"""
-    queryset = Execution.objects.select_related(
-        'snmp_job', 
-        'olt',
-        'workflow_node',
-        'workflow_node__workflow',
-        'workflow_node__template_node',
-        'workflow_node__template_node__template'
-    ).all()
     serializer_class = ExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -300,8 +358,15 @@ class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data)
     
     def get_queryset(self):
-        """Sobrescribir para agregar logs de diagnóstico cuando se filtra por workflow_node"""
-        queryset = super().get_queryset()
+        """Excluir ejecuciones de OLTs eliminadas y agregar logs de diagnóstico"""
+        queryset = Execution.objects.select_related(
+            'snmp_job', 
+            'olt',
+            'workflow_node',
+            'workflow_node__workflow',
+            'workflow_node__template_node',
+            'workflow_node__template_node__template'
+        ).filter(olt__is_deleted=False)  # ✅ Excluir ejecuciones de OLTs eliminadas
         
         # Log cuando se filtra por workflow_node
         workflow_node_id = self.request.query_params.get('workflow_node')
@@ -333,11 +398,6 @@ class ExecutionViewSet(viewsets.ReadOnlyModelViewSet):
 )
 class OnuInventoryViewSet(viewsets.ModelViewSet):
     """ViewSet para inventario de ONUs (OnuInventory)"""
-    queryset = OnuInventory.objects.select_related(
-        'olt', 
-        'onu_index', 
-        'onu_index__status'
-    ).all()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = {
@@ -352,6 +412,14 @@ class OnuInventoryViewSet(viewsets.ModelViewSet):
     search_fields = ['serial_number', 'mac_address', 'subscriber_id', 'snmp_description']
     ordering_fields = ['created_at', 'updated_at', 'snmp_last_collected_at']
     ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Excluir ONUs de OLTs eliminadas"""
+        return OnuInventory.objects.select_related(
+            'olt', 
+            'onu_index', 
+            'onu_index__status'
+        ).filter(olt__is_deleted=False)
     
     def get_serializer_class(self):
         """Usar serializer diferente para listado"""
@@ -615,12 +683,15 @@ class OnuInventoryViewSet(viewsets.ModelViewSet):
 )
 class OnuIndexMapViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet para mapeo de índices ONUs (OnuIndexMap) - Solo lectura"""
-    queryset = OnuIndexMap.objects.select_related('olt', 'odf_hilo').all()
     serializer_class = OnuIndexMapSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['olt', 'slot', 'port']
     search_fields = ['raw_index_key', 'normalized_id']
+    
+    def get_queryset(self):
+        """Excluir índices de OLTs eliminadas"""
+        return OnuIndexMap.objects.select_related('olt', 'odf_hilo').filter(olt__is_deleted=False)
 
 
 @extend_schema_view(
@@ -693,12 +764,15 @@ class IndexFormulaViewSet(viewsets.ModelViewSet):
 )
 class ODFViewSet(viewsets.ModelViewSet):
     """ViewSet para ODFs"""
-    queryset = ODF.objects.select_related('olt').all()
     serializer_class = ODFSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['numero_odf', 'nombre_troncal', 'descripcion']
     filterset_fields = ['olt']
+    
+    def get_queryset(self):
+        """Excluir ODFs de OLTs eliminadas"""
+        return ODF.objects.select_related('olt').filter(olt__is_deleted=False)
 
 
 @extend_schema_view(
@@ -723,12 +797,15 @@ class ODFHilosViewSet(viewsets.ModelViewSet):
 )
 class ZabbixPortDataViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet para datos de puertos de Zabbix (solo lectura)"""
-    queryset = ZabbixPortData.objects.select_related('olt').all()
     serializer_class = ZabbixPortDataSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['olt', 'disponible', 'operativo_noc', 'estado_administrativo']
     search_fields = ['descripcion_zabbix', 'interface_name']
+    
+    def get_queryset(self):
+        """Excluir puertos de OLTs eliminadas"""
+        return ZabbixPortData.objects.select_related('olt').filter(olt__is_deleted=False)
 
 
 # ============================================================================
@@ -1377,6 +1454,53 @@ class WorkflowTemplateViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
     
+    def create(self, request, *args, **kwargs):
+        """Crear plantilla con manejo de excepciones"""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        except ValidationError as e:
+            # Errores de validación del serializer (DRF)
+            error_detail = e.detail if hasattr(e, 'detail') else str(e)
+            if isinstance(error_detail, dict):
+                # Formatear errores de validación
+                formatted_errors = []
+                for field, errors in error_detail.items():
+                    if isinstance(errors, list):
+                        # Extraer el mensaje de ErrorDetail si es necesario
+                        error_messages = []
+                        for error in errors:
+                            if hasattr(error, 'code') and hasattr(error, 'string'):
+                                error_messages.append(str(error))
+                            else:
+                                error_messages.append(str(error))
+                        formatted_errors.extend([f"{field}: {msg}" for msg in error_messages])
+                    else:
+                        formatted_errors.append(f"{field}: {errors}")
+                error_message = "; ".join(formatted_errors)
+            else:
+                error_message = str(error_detail)
+            logger.warning(f"Error de validación creando plantilla: {error_message}")
+            return Response(
+                {'error': error_message, 'detail': error_detail},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except ValueError as e:
+            logger.warning(f"ValueError creando plantilla: {e}")
+            return Response(
+                {'error': str(e), 'detail': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error creando plantilla: {e}", exc_info=True)
+            return Response(
+                {'error': str(e), 'detail': 'Error interno del servidor al crear la plantilla'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @extend_schema(
         description="Obtener nodos de una plantilla",
         responses={200: WorkflowTemplateNodeSerializer(many=True)}
@@ -1441,13 +1565,17 @@ class WorkflowTemplateViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'], url_path='assigned-olts')
     def assigned_olts(self, request, pk=None):
-        """Obtener OLTs asignadas a una plantilla"""
+        """Obtener OLTs asignadas a una plantilla (excluyendo eliminadas)"""
         template = self.get_object()
-        links = template.workflow_links.select_related('workflow__olt').all()
+        links = template.workflow_links.select_related('workflow__olt').filter(
+            workflow__olt__is_deleted=False  # ✅ Excluir OLTs eliminadas
+        ).all()
         
         olts_data = []
         for link in links:
             olt = link.workflow.olt
+            if olt.is_deleted:  # Doble verificación por seguridad
+                continue
             olts_data.append({
                 'id': olt.id,
                 'abreviatura': olt.abreviatura,
@@ -1612,7 +1740,6 @@ class WorkflowTemplateNodeViewSet(viewsets.ModelViewSet):
 )
 class OLTWorkflowViewSet(viewsets.ModelViewSet):
     """ViewSet para workflows de OLT"""
-    queryset = OLTWorkflow.objects.select_related('olt').prefetch_related('nodes').all()
     serializer_class = OLTWorkflowSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1620,6 +1747,10 @@ class OLTWorkflowViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
     ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Excluir workflows de OLTs eliminadas"""
+        return OLTWorkflow.objects.select_related('olt').prefetch_related('nodes').filter(olt__is_deleted=False)
     
     @extend_schema(
         description="Obtener nodos de un workflow con estadísticas de ejecuciones",
@@ -1919,8 +2050,11 @@ def future_executions_list(request):
     limit = int(request.query_params.get('limit', 50))
     olt_id = request.query_params.get('olt')
     
-    # Obtener todos los workflows activos
-    workflows = OLTWorkflow.objects.filter(is_active=True).select_related('olt').order_by('olt__abreviatura')
+    # Obtener todos los workflows activos (excluyendo OLTs eliminadas)
+    workflows = OLTWorkflow.objects.filter(
+        is_active=True,
+        olt__is_deleted=False  # ✅ Excluir workflows de OLTs eliminadas
+    ).select_related('olt').order_by('olt__abreviatura')
     
     if olt_id:
         workflows = workflows.filter(olt_id=olt_id)

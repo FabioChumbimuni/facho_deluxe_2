@@ -60,7 +60,8 @@ class CoordinatorLogger:
     def _log_to_db(self, event_type, message, olt=None, level='INFO', details=None):
         """Escribe log en la base de datos"""
         try:
-            from .models import CoordinatorLog
+            # Importar desde execution_coordinator.models porque los modelos deben mantenerse en la BD
+            from execution_coordinator.models import CoordinatorLog
             CoordinatorLog.log(
                 event_type=event_type,
                 message=message,

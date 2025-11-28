@@ -34,6 +34,8 @@ app.conf.task_routes = {
     # Tareas de sincronización masiva batch
     'odf_management.tasks.sync_all_odf_hilos': {'queue': 'odf_sync'},
     'odf_management.tasks.sync_odf_hilos_for_olt': {'queue': 'odf_sync'},
+    # Tareas de Pollers Zabbix (NUEVO - reemplaza coordinador)
+    'zabbix_pollers.tasks.zabbix_scheduler_loop_task': {'queue': 'zabbix_scheduler'},
 }
 
 # Configuración de workers por cola (4 colas especializadas)

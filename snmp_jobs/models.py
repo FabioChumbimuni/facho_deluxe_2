@@ -859,9 +859,15 @@ class WorkflowTemplate(models.Model):
         """
         Verifica si la plantilla tiene al menos un workflow vinculado a una OLT.
         """
-        return self.workflow_links.filter(
-            workflow__olt__habilitar_olt=True
-        ).exists()
+        # No se puede acceder a relaciones si el objeto no tiene pk
+        if not self.pk:
+            return False
+        try:
+            return self.workflow_links.filter(
+                workflow__olt__habilitar_olt=True
+            ).exists()
+        except (AttributeError, ValueError):
+            return False
     
     @property
     def olts_count(self):
@@ -877,7 +883,10 @@ class WorkflowTemplate(models.Model):
         Valida que la plantilla tenga OLTs asignadas antes de activarla.
         Si está activa pero no tiene OLTs, se desactiva automáticamente.
         """
-        # Si se está activando pero no tiene OLTs asignadas, desactivar
+        # Guardar primero para obtener el pk
+        super().save(*args, **kwargs)
+        
+        # Si se está activando pero no tiene OLTs asignadas, solo advertir (no desactivar automáticamente)
         if self.is_active and not self.has_olts_assigned:
             import logging
             logger = logging.getLogger(__name__)
@@ -1234,15 +1243,20 @@ class WorkflowNode(models.Model):
         self.metadata = metadata
         self.save()
     
-    def is_executable(self):
+    def is_executable(self, skip_template_check=False):
         """
         Verifica si este nodo puede ejecutarse según la lógica de activación en cascada.
         
         Para que un nodo se ejecute, TODOS estos deben estar activos:
         1. OLT debe estar habilitada (habilitar_olt=True)
         2. Plantilla debe estar activa (is_active=True) - si el nodo viene de plantilla
+           ⚠️ EXCEPCIÓN: Si skip_template_check=True, omite esta validación (para ejecuciones manuales)
         3. Workflow debe estar activo (is_active=True)
         4. Nodo debe estar habilitado (enabled=True)
+        
+        Args:
+            skip_template_check: Si True, omite la validación del estado de la plantilla.
+                                Útil para ejecuciones manuales donde la plantilla puede estar inactiva.
         
         Returns:
             bool: True si el nodo puede ejecutarse, False en caso contrario
@@ -1256,7 +1270,8 @@ class WorkflowNode(models.Model):
             return False
         
         # 3. Si el nodo viene de una plantilla, verificar que la plantilla esté activa
-        if self.template_node and self.template_node.template:
+        # ⚠️ EXCEPCIÓN: Omitir esta validación si skip_template_check=True (ejecuciones manuales)
+        if not skip_template_check and self.template_node and self.template_node.template:
             if not self.template_node.template.is_active:
                 return False
         
@@ -1319,7 +1334,7 @@ class WorkflowNode(models.Model):
         self.next_run_at = next_time
         return next_time
     
-    def can_execute_now(self, now=None):
+    def can_execute_now(self, now=None, skip_template_check=False, skip_next_run_check=False):
         """
         Verifica si este nodo puede ejecutarse ahora según:
         1. Dependencias (upstream nodes deben haber terminado)
@@ -1330,6 +1345,10 @@ class WorkflowNode(models.Model):
         
         Args:
             now: Tiempo actual (opcional, por defecto timezone.now())
+            skip_template_check: Si True, omite la validación del estado de la plantilla.
+                                Útil para ejecuciones manuales donde la plantilla puede estar inactiva.
+            skip_next_run_check: Si True, omite la validación de next_run_at.
+                                Útil para ejecuciones manuales donde se quiere ejecutar inmediatamente.
         
         Returns:
             tuple: (can_execute: bool, reason: str)
@@ -1341,7 +1360,7 @@ class WorkflowNode(models.Model):
             now = timezone.now()
         
         # 1. Verificar que esté habilitado
-        if not self.is_executable():
+        if not self.is_executable(skip_template_check=skip_template_check):
             return False, "Nodo no está habilitado o workflow/OLT inactivo"
         
         # 1.5. Verificar que tenga OID (requerido para ejecución SNMP)
@@ -1368,7 +1387,8 @@ class WorkflowNode(models.Model):
             # Los nodos en cadena no tienen next_run_at, se ejecutan inmediatamente después del master
         
         # 3. Verificar que next_run_at esté en el pasado (solo para nodos no en cadena)
-        if not self.is_chain_node:
+        # ⚠️ EXCEPCIÓN: Omitir esta validación si skip_next_run_check=True (ejecuciones manuales)
+        if not self.is_chain_node and not skip_next_run_check:
             if not self.next_run_at:
                 return False, "next_run_at no inicializado"
             

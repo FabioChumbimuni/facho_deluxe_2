@@ -10,8 +10,8 @@ from easysnmp import Session, EasySNMPError
 from croniter import croniter
 from configuracion_avanzada.services import get_snmp_timeout, get_snmp_retries
 
-from execution_coordinator.event_utils import create_execution_event
-from execution_coordinator.logger import coordinator_logger
+from execution_utils.event_utils import create_execution_event
+from execution_utils.logger import coordinator_logger
 
 from .models import SnmpJob, SnmpJobHost
 from executions.models import Execution
@@ -660,7 +660,7 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 
                 # ✅ CRÍTICO: Llamar callback para actualizar WorkflowNode y ejecutar nodos en cadena
                 try:
-                    from execution_coordinator.callbacks import on_task_completed
+                    from execution_utils.callbacks import on_task_completed
                     job_name = job.nombre if job else (execution.workflow_node.name if execution.workflow_node else 'WorkflowNode')
                     job_type = job.job_type if job else 'descubrimiento'
                     
@@ -882,7 +882,7 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 
                 # CALLBACK AL COORDINATOR: Notificar que la tarea terminó
                 try:
-                    from execution_coordinator.callbacks import on_task_completed
+                    from execution_utils.callbacks import on_task_completed
                     on_task_completed(
                         olt_id=olt.id,
                         task_name=job.nombre,
@@ -980,12 +980,13 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 
                 # CALLBACK AL COORDINATOR: Notificar fallo
                 try:
-                    from execution_coordinator.callbacks import on_task_failed
+                    from execution_utils.callbacks import on_task_failed
                     on_task_failed(
                         olt_id=olt.id,
                         task_name=job.nombre,
                         task_type=job.job_type,
-                        error_message=error_msg
+                        error_message=error_msg,
+                        execution_id=execution.id if 'execution' in locals() else None
                     )
                 except Exception as callback_error:
                     logger.warning(f"Error en callback coordinator: {callback_error}")

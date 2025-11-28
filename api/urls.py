@@ -67,12 +67,15 @@ urlpatterns = [
     # Futuras ejecuciones de workflows
     path('workflows/future-executions/', future_executions_list, name='future-executions-list'),
     
+    # Pollers Zabbix (reemplaza coordinador) - ANTES del router para evitar conflictos
+    path('pollers/', include('zabbix_pollers.urls')),
+    
     # Documentación de la API
     path('schema/', SpectacularAPIView.as_view(), name='schema'),
     path('docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
-    # Incluir las rutas del router
+    # Incluir las rutas del router (al final para evitar conflictos)
     path('', include(router.urls)),
 ]
 
