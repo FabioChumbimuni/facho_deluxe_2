@@ -1814,6 +1814,52 @@ class WorkflowNodeViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['workflow', 'enabled']
     
+    @extend_schema(
+        description="Obtener nodos disponibles como master para nodos encadenados",
+        parameters=[
+            OpenApiParameter(
+                name='workflow_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='ID del workflow para filtrar nodos',
+                required=True
+            )
+        ],
+        responses={200: WorkflowNodeSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'], url_path='available-masters')
+    def available_masters(self, request):
+        """
+        Obtener nodos disponibles como master para nodos encadenados.
+        Solo devuelve nodos que NO son chain nodes (is_chain_node=False)
+        """
+        workflow_id = request.query_params.get('workflow_id')
+        
+        if not workflow_id:
+            return Response(
+                {'error': 'Parámetro workflow_id es requerido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            workflow_id = int(workflow_id)
+        except ValueError:
+            return Response(
+                {'error': 'workflow_id debe ser un número entero'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Obtener nodos del workflow que pueden ser masters
+        # Solo nodos que NO son chain nodes (is_chain_node=False)
+        available_masters = WorkflowNode.objects.filter(
+            workflow_id=workflow_id,
+            is_chain_node=False,
+            enabled=True  # Solo nodos habilitados
+        ).select_related('workflow', 'template_node').order_by('name')
+        
+        serializer = self.get_serializer(available_masters, many=True)
+        return Response(serializer.data)
+    
     def destroy(self, request, *args, **kwargs):
         """Eliminar nodo - previene eliminación de nodos vinculados a plantillas"""
         instance = self.get_object()
