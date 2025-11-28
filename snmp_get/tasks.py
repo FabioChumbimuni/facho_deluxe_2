@@ -338,7 +338,14 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                     
                     # Extraer valor
                     value = result.value if hasattr(result, 'value') else str(result)
-                    value_str = str(value).strip().strip('"')
+                    
+                    # Manejar diferentes tipos de valores desde EasySNMP
+                    # Para Hex-STRING, puede venir como bytes o como string
+                    if isinstance(value, bytes):
+                        # Si es bytes, convertirlo a hex string directamente
+                        value_str = value.hex().upper()
+                    else:
+                        value_str = str(value).strip().strip('"')
                     
                     # Verificar si es NOSUCHINSTANCE (ONU no existe o desconectada)
                     if (value_str.lower() in ['no such instance currently exists at this oid', 
@@ -452,10 +459,44 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                     valor_a_guardar = value_str
                     campo_actualizado = False
                     
-                    # 1. FORMATEAR MAC si está habilitado (AC:DC:SD → ACDCSD)
+                    # 1. FORMATEAR MAC si está habilitado
+                    # Soporta múltiples formatos:
+                    # - Hex-STRING: 48 57 54 43 80 A4 28 AE → 4857544380A428AE
+                    # - 48 57 54 43 80 A4 28 AE → 4857544380A428AE
+                    # - AC:DC:SD:12:34:56 → ACDCSD123456
+                    # - Bytes mal convertidos a string (caracteres raros) → hex string
                     if format_mac and valor_a_guardar:
-                        valor_a_guardar = valor_a_guardar.replace(':', '').replace(' ', '').upper()
-                        logger.debug(f"   🔧 MAC formateada: {value_str} → {valor_a_guardar}")
+                        valor_original = valor_a_guardar
+                        
+                        # Si tiene prefijo "Hex-STRING:", extraer solo la parte hex
+                        if valor_a_guardar.upper().startswith('HEX-STRING:'):
+                            valor_a_guardar = valor_a_guardar.split(':', 1)[1].strip()
+                            logger.debug(f"   🔧 Prefijo Hex-STRING removido: {valor_original[:50]}... → {valor_a_guardar[:50]}...")
+                        
+                        # Detectar si el valor son bytes mal convertidos a string (contiene caracteres no imprimibles)
+                        # Esto ocurre cuando EasySNMP devuelve bytes que se interpretan como caracteres ASCII
+                        try:
+                            # Si el valor contiene caracteres no imprimibles fuera del rango ASCII imprimible,
+                            # probablemente son bytes que necesitan ser convertidos a hex
+                            has_non_printable = any(
+                                ord(c) < 32 or ord(c) > 126 
+                                for c in valor_a_guardar 
+                                if c not in [' ', ':', '-', '\n', '\r', '\t']
+                            )
+                            
+                            if has_non_printable:
+                                # Convertir de vuelta a bytes usando latin-1 (preserva todos los valores 0-255)
+                                valor_bytes = valor_a_guardar.encode('latin-1')
+                                valor_a_guardar = valor_bytes.hex().upper()
+                                logger.debug(f"   🔧 Bytes detectados y convertidos a hex: {valor_a_guardar}")
+                        except (UnicodeEncodeError, AttributeError):
+                            # Si falla, continuar con el procesamiento normal
+                            pass
+                        
+                        # Eliminar todos los separadores comunes (espacios, dos puntos, guiones)
+                        valor_a_guardar = valor_a_guardar.replace(' ', '').replace(':', '').replace('-', '').upper()
+                        
+                        logger.debug(f"   🔧 MAC formateada: {value_str[:50]}... → {valor_a_guardar[:50]}...")
                     
                     # 2. LÓGICA SEGÚN EL CAMPO
                     if target_field == 'distancia_onu':
