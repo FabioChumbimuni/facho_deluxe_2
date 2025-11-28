@@ -76,6 +76,7 @@ class OID(models.Model):
     class Meta:
         db_table = 'oids'
         managed = True
+        ordering = ['id']  # ✅ Ordenamiento por defecto para evitar warning de paginación
 
     def clean(self):
         """Validaciones personalizadas"""

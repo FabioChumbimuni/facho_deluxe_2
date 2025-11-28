@@ -653,9 +653,11 @@ class OIDViewSet(viewsets.ModelViewSet):
     queryset = OID.objects.all()
     serializer_class = OIDSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, DjangoFilterBackend]
+    filter_backends = [filters.SearchFilter, DjangoFilterBackend, filters.OrderingFilter]
     search_fields = ['nombre', 'oid']
     filterset_fields = ['marca', 'espacio']  # Campos reales del modelo
+    ordering_fields = ['id', 'nombre', 'oid', 'espacio', 'marca']
+    ordering = ['id']  # ✅ Ordenamiento por defecto para evitar warning de paginación
 
 
 @extend_schema_view(
@@ -1636,22 +1638,28 @@ class OLTWorkflowViewSet(viewsets.ModelViewSet):
         
         # Obtener estadísticas de ejecuciones para cada nodo
         now = timezone.now()
-        one_hour_ago = now - timedelta(hours=1)
+        # ✅ CORREGIDO: Filtrar ejecuciones desde el inicio de la hora actual
+        # Por ejemplo, si son las 16:53, mostrar desde las 16:00 hasta ahora
+        hour_start = now.replace(minute=0, second=0, microsecond=0)
         peru_tz = pytz.timezone('America/Lima')
         
         nodes_data = []
         for node in nodes:
             node_dict = WorkflowNodeSerializer(node).data
             
-            # Calcular solo ejecuciones totales del nodo master (sin cuota)
+            # Calcular ejecuciones de la última hora del nodo (todos los estados)
             from executions.models import Execution
-            total_executions = Execution.objects.filter(
+            
+            executions_last_hour = Execution.objects.filter(
                 workflow_node=node,
-                status__in=['SUCCESS', 'FAILED', 'INTERRUPTED']
+                created_at__gte=hour_start
             ).count()
             
+            # Log de depuración
+            logger.debug(f"Nodo {node.name} (ID: {node.id}): {executions_last_hour} ejecuciones en última hora")
+            
             node_dict['execution_stats'] = {
-                'total_executions': total_executions
+                'executions_last_hour': executions_last_hour
             }
             
             nodes_data.append(node_dict)

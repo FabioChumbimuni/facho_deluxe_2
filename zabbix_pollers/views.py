@@ -26,11 +26,13 @@ def get_pollers(request):
         poller_manager = get_poller_manager()
         
         # Obtener estadísticas de cada poller
-        # ✅ MEJORADO: Usar quick_mode=False para obtener estado real y preciso
-        # Esto asegura que las estadísticas individuales coincidan con las globales
+        # ✅ OPTIMIZADO: Usar quick_mode=True por defecto para mejor rendimiento
+        # quick_mode=False solo cuando sea necesario (hace consultas pesadas a BD)
+        # Si necesitas datos más precisos, puedes agregar un parámetro ?detailed=true
+        use_detailed = request.query_params.get('detailed', 'false').lower() == 'true'
         pollers_data = []
         for poller in poller_manager.pollers:
-            pollers_data.append(poller.get_stats(quick_mode=False))
+            pollers_data.append(poller.get_stats(quick_mode=not use_detailed))
         
         # Log de depuración: mostrar todos los poller_ids que se están devolviendo
         poller_ids = [p.get('poller_id') for p in pollers_data if p and p.get('poller_id') is not None]

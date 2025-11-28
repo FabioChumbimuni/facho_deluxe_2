@@ -302,7 +302,7 @@ programs=gunicorn,celery_worker_main,celery_worker_discovery,celery_worker_disco
 ; Gunicorn - Servidor Web Django
 ; ========================================
 [program:gunicorn]
-command=$VENV_DIR/bin/gunicorn core.wsgi:application --workers 3 --bind $BIND_IP:$BIND_PORT --timeout 120 --keep-alive 2
+command=$VENV_DIR/bin/gunicorn core.wsgi:application --workers 3 --bind $BIND_IP:$BIND_PORT --timeout 300 --keep-alive 2
 directory=$PROJECT_DIR
 user=$USER
 autostart=true
