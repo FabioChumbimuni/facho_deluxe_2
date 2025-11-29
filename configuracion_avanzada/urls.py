@@ -16,5 +16,4 @@ urlpatterns = [
     
     # Dashboards específicos
     path('snmp/', views.configuracion_snmp_dashboard, name='snmp_dashboard'),
-    path('celery/', views.configuracion_celery_dashboard, name='celery_dashboard'),
 ]

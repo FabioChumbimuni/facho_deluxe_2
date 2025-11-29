@@ -1,9 +1,7 @@
 from typing import Optional, Dict, Any
 
-from django.db import transaction
-
-# Importar desde execution_coordinator.models porque los modelos deben mantenerse en la BD
-from execution_coordinator.models import CoordinatorEvent
+# CoordinatorEvent eliminado - ya no se usan eventos en BD
+# Esta función ahora solo retorna None silenciosamente
 
 
 def create_execution_event(
@@ -17,11 +15,12 @@ def create_execution_event(
     source: str = "SYSTEM",
     reason: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
-) -> Optional[CoordinatorEvent]:
+) -> None:
     """
-    Crea un registro en `CoordinatorEvent` de forma defensiva.
-
-    Args:
+    Función desactivada - CoordinatorEvent ya no existe.
+    Los eventos ahora solo se registran en logs de archivo.
+    
+    Args: (mantenidos para compatibilidad, pero no se usan)
         event_type: Código del evento (EXECUTION_STARTED, EXECUTION_COMPLETED, etc.)
         execution: Instancia de `executions.Execution`
         snmp_job: Instancia de `snmp_jobs.SnmpJob`
@@ -32,22 +31,7 @@ def create_execution_event(
         reason: Texto descriptivo corto
         details: Diccionario serializable con información adicional
     """
-    try:
-        with transaction.atomic():
-            event = CoordinatorEvent.objects.create(
-                execution=execution,
-                snmp_job=snmp_job or (execution.snmp_job if execution else None),
-                job_host=job_host or (execution.job_host if execution else None),
-                olt=olt or (execution.olt if execution else None),
-                event_type=event_type,
-                decision=decision,
-                source=source,
-                reason=reason,
-                details=details or {},
-            )
-        return event
-    except Exception:
-        # Evitar que fallos en logging de eventos interrumpan el flujo principal
-        return None
+    # Ya no se crean eventos en BD - retornar None silenciosamente
+    return None
 
 

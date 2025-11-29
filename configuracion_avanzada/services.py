@@ -1,6 +1,6 @@
 from django.core.cache import cache
 from django.conf import settings
-from .models import ConfiguracionSistema, ConfiguracionSNMP, ConfiguracionCelery
+from .models import ConfiguracionSistema, ConfiguracionSNMP
 import logging
 
 logger = logging.getLogger(__name__)
@@ -123,31 +123,6 @@ class ConfiguracionService:
             'version': '2c'
         }
     
-    @classmethod
-    def get_celery_config(cls, cola):
-        """
-        Obtener configuración Celery para una cola específica
-        
-        Args:
-            cola (str): Nombre de la cola
-            
-        Returns:
-            dict: Configuración Celery
-        """
-        try:
-            config = ConfiguracionCelery.objects.get(cola=cola, activo=True)
-            return {
-                'concurrency': config.concurrencia,
-                'timeout': config.timeout_tarea,
-                'retries': config.reintentos_tarea
-            }
-        except ConfiguracionCelery.DoesNotExist:
-            logger.warning(f"Configuración Celery para cola '{cola}' no encontrada, usando valores por defecto")
-            return {
-                'concurrency': 1,
-                'timeout': 300,
-                'retries': 0
-            }
     
     @classmethod
     def clear_cache(cls, nombre=None):

@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.db import transaction
 import logging
 
-from .models import ConfiguracionSistema, ConfiguracionSNMP, ConfiguracionCelery
+from .models import ConfiguracionSistema, ConfiguracionSNMP
 from .services import ConfiguracionService
 
 logger = logging.getLogger(__name__)
@@ -169,18 +169,6 @@ def configuracion_snmp_saved(sender, instance: ConfiguracionSNMP, **kwargs):
 def configuracion_snmp_deleted(sender, instance: ConfiguracionSNMP, **kwargs):
     _clear_config_cache('snmp_timeout_global')
     _clear_config_cache('snmp_retries_global')
-    _sync_runtime_settings()
-
-
-@receiver(post_save, sender=ConfiguracionCelery)
-def configuracion_celery_saved(sender, instance: ConfiguracionCelery, **kwargs):
-    _clear_config_cache('dispatcher_interval')
-    _sync_runtime_settings()
-
-
-@receiver(post_delete, sender=ConfiguracionCelery)
-def configuracion_celery_deleted(sender, instance: ConfiguracionCelery, **kwargs):
-    _clear_config_cache('dispatcher_interval')
     _sync_runtime_settings()
 
 

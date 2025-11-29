@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import ConfiguracionSistema, ConfiguracionSNMP, ConfiguracionCelery
+from .models import ConfiguracionSistema, ConfiguracionSNMP
 
 
 @admin.register(ConfiguracionSistema)
@@ -183,47 +183,6 @@ class ConfiguracionSNMPAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color: #999;">N/A</span>')
     get_poller_config.short_description = 'Config. Pollers'
-
-
-@admin.register(ConfiguracionCelery)
-class ConfiguracionCeleryAdmin(admin.ModelAdmin):
-    """Admin para configuraciones Celery"""
-    
-    list_display = (
-        'nombre', 'cola', 'concurrencia', 'timeout_tarea', 
-        'reintentos_tarea', 'activo', 'fecha_modificacion'
-    )
-    list_filter = ('cola', 'activo', 'fecha_creacion')
-    search_fields = ('nombre', 'cola')
-    readonly_fields = ('fecha_creacion', 'fecha_modificacion')
-    
-    fieldsets = (
-        ('Información Básica', {
-            'fields': ('nombre', 'cola', 'activo')
-        }),
-        ('Configuración de Workers', {
-            'fields': ('concurrencia',)
-        }),
-        ('Configuración de Tareas', {
-            'fields': ('timeout_tarea', 'reintentos_tarea')
-        }),
-        ('Metadatos', {
-            'fields': ('fecha_creacion', 'fecha_modificacion'),
-            'classes': ('collapse',)
-        }),
-    )
-
-    def get_timeout_display(self, obj):
-        """Muestra el timeout con formato"""
-        return f"{obj.timeout_tarea}s"
-    get_timeout_display.short_description = 'Timeout'
-    get_timeout_display.admin_order_field = 'timeout_tarea'
-
-    def get_concurrencia_display(self, obj):
-        """Muestra la concurrencia con formato"""
-        return f"{obj.concurrencia} workers"
-    get_concurrencia_display.short_description = 'Concurrencia'
-    get_concurrencia_display.admin_order_field = 'concurrencia'
 
 
 # Personalizar el título del admin

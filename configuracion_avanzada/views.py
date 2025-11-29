@@ -6,7 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
 import json
-from .models import ConfiguracionSistema, ConfiguracionSNMP, ConfiguracionCelery
+from .models import ConfiguracionSistema, ConfiguracionSNMP
 
 
 @staff_member_required
@@ -18,7 +18,6 @@ def configuracion_dashboard(request):
     total_configs = ConfiguracionSistema.objects.count()
     configs_activas = ConfiguracionSistema.objects.filter(activo=True).count()
     configs_snmp = ConfiguracionSNMP.objects.filter(activo=True).count()
-    configs_celery = ConfiguracionCelery.objects.filter(activo=True).count()
     
     # Obtener configuraciones por categoría
     configs_por_categoria = {}
@@ -193,31 +192,3 @@ def configuracion_snmp_dashboard(request):
     
     return render(request, 'configuracion_avanzada/snmp_dashboard.html', context)
 
-
-@staff_member_required
-def configuracion_celery_dashboard(request):
-    """
-    Dashboard específico para configuraciones Celery
-    """
-    configs_celery = ConfiguracionCelery.objects.filter(activo=True).order_by('cola', 'nombre')
-    
-    # Estadísticas Celery
-    total_configs = configs_celery.count()
-    colas = {}
-    total_workers = 0
-    
-    for config in configs_celery:
-        cola = config.cola
-        if cola not in colas:
-            colas[cola] = 0
-        colas[cola] += 1
-        total_workers += config.concurrencia
-    
-    context = {
-        'configs_celery': configs_celery,
-        'total_configs': total_configs,
-        'colas': colas,
-        'total_workers': total_workers,
-    }
-    
-    return render(request, 'configuracion_avanzada/celery_dashboard.html', context)

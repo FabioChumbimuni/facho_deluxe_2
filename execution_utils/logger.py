@@ -1,9 +1,8 @@
 """
-Sistema de Logging Dual para el Coordinator
+Sistema de Logging para el Coordinator
 
-Escribe tanto en:
-1. Base de datos (CoordinatorLog model) para consultas
-2. Archivo de log rotativo para troubleshooting
+Escribe solo en archivo de log rotativo para troubleshooting.
+Los modelos CoordinatorLog y CoordinatorEvent fueron eliminados.
 """
 
 import logging
@@ -17,7 +16,7 @@ from django.utils import timezone
 class CoordinatorLogger:
     """
     Logger personalizado para el Coordinator
-    Escribe en BD y archivo simultáneamente
+    Escribe solo en archivo (los modelos de BD fueron eliminados)
     """
     
     def __init__(self, name='coordinator'):
@@ -57,21 +56,8 @@ class CoordinatorLogger:
         
         self.file_logger.addHandler(handler)
     
-    def _log_to_db(self, event_type, message, olt=None, level='INFO', details=None):
-        """Escribe log en la base de datos"""
-        try:
-            # Importar desde execution_coordinator.models porque los modelos deben mantenerse en la BD
-            from execution_coordinator.models import CoordinatorLog
-            CoordinatorLog.log(
-                event_type=event_type,
-                message=message,
-                olt=olt,
-                level=level,
-                details=details
-            )
-        except Exception as e:
-            # Si falla el log en BD, solo registrar en archivo
-            self.file_logger.error(f"Error escribiendo log en BD: {e}")
+    # Método _log_to_db eliminado - los modelos CoordinatorLog y CoordinatorEvent ya no existen
+    # Ahora solo se escribe en archivo
     
     def debug(self, message, olt=None, event_type='STATE_CHANGE', details=None):
         """Log nivel DEBUG"""
@@ -81,22 +67,22 @@ class CoordinatorLogger:
     def info(self, message, olt=None, event_type='STATE_CHANGE', details=None):
         """Log nivel INFO"""
         self.file_logger.info(message)
-        self._log_to_db(event_type, message, olt, 'INFO', details)
+        # Ya no se escribe en BD (modelos eliminados)
     
     def warning(self, message, olt=None, event_type='QUOTA_WARNING', details=None):
         """Log nivel WARNING"""
         self.file_logger.warning(message)
-        self._log_to_db(event_type, message, olt, 'WARNING', details)
+        # Ya no se escribe en BD (modelos eliminados)
     
     def error(self, message, olt=None, event_type='EXECUTION_FAILED', details=None):
         """Log nivel ERROR"""
         self.file_logger.error(message)
-        self._log_to_db(event_type, message, olt, 'ERROR', details)
+        # Ya no se escribe en BD (modelos eliminados)
     
     def critical(self, message, olt=None, event_type='QUOTA_VIOLATION', details=None):
         """Log nivel CRITICAL"""
         self.file_logger.critical(message)
-        self._log_to_db(event_type, message, olt, 'CRITICAL', details)
+        # Ya no se escribe en BD (modelos eliminados)
     
     # Métodos de conveniencia para eventos específicos
     

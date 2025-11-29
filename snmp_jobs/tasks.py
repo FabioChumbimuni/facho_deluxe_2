@@ -267,16 +267,10 @@ def delete_history_records(self, record_ids):
                     """)
                     onu_status_updated = cursor.rowcount
                     
-                    # Actualizar coordinator_events.execution_id a NULL
-                    cursor.execute(f"""
-                        UPDATE coordinator_events 
-                        SET execution_id = NULL 
-                        WHERE execution_id IN ({ids_str})
-                    """)
-                    coordinator_events_updated = cursor.rowcount
+                    # coordinator_events ya no existe (tabla eliminada)
                     
-                    if onu_inventory_updated > 0 or onu_status_updated > 0 or coordinator_events_updated > 0:
-                        logger.info(f"   🔗 Referencias FK actualizadas: onu_inventory={onu_inventory_updated}, onu_status={onu_status_updated}, coordinator_events={coordinator_events_updated}")
+                    if onu_inventory_updated > 0 or onu_status_updated > 0:
+                        logger.info(f"   🔗 Referencias FK actualizadas: onu_inventory={onu_inventory_updated}, onu_status={onu_status_updated}")
                     
                     # AHORA: Borrar los registros de snmp_executions
                     sql_query = f"DELETE FROM snmp_executions WHERE id IN ({ids_str})"
