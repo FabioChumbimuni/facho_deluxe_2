@@ -430,10 +430,14 @@ def handle_workflow_template_activation(sender, instance, created, **kwargs):
                 nodes_affected = 0
                 
                 for workflow_node in workflow_nodes:
-                    # Abortar ejecuciones PENDING y RUNNING de este nodo
+                    # ✅ CRÍTICO: Abortar TODAS las ejecuciones PENDING y RUNNING de este nodo
+                    # Incluyendo las que ya están en ejecución (RUNNING con pollers activos)
+                    # Esto es necesario para detener el tráfico SNMP cuando se desactiva la plantilla
                     pending_executions = Execution.objects.filter(
                         workflow_node=workflow_node,
                         status__in=['PENDING', 'RUNNING']
+                        # ✅ IMPORTANTE: Abortar TODAS, incluso las que tienen celery_task_id
+                        # Los pollers GET verifican si la ejecución está INTERRUPTED antes de procesar
                     )
                     
                     aborted_count = pending_executions.update(
@@ -441,6 +445,20 @@ def handle_workflow_template_activation(sender, instance, created, **kwargs):
                         finished_at=timezone.now(),
                         error_message=f"Plantilla '{instance.name}' desactivada"
                     )
+                    
+                    # Para ejecuciones GET en RUNNING, también necesitamos cancelar los pollers activos
+                    # Esto se hace marcando la ejecución como INTERRUPTED, y los pollers lo detectan
+                    running_get_executions = Execution.objects.filter(
+                        workflow_node=workflow_node,
+                        status='INTERRUPTED',  # Ya fueron marcadas como INTERRUPTED arriba
+                        snmp_job__job_type='get'
+                    )
+                    
+                    if running_get_executions.exists():
+                        logger.info(
+                            f"   🛑 {running_get_executions.count()} ejecución(es) GET en RUNNING abortada(s), "
+                            f"los pollers detectarán INTERRUPTED y se detendrán"
+                        )
                     
                     # Limpiar next_run_at para que no se ejecute más
                     workflow_node.next_run_at = None
@@ -695,10 +713,14 @@ def handle_task_template_status_change(sender, instance, created, **kwargs):
                 total_canceled = 0
                 
                 for workflow_node in workflow_nodes:
-                    # Cancelar ejecuciones PENDING y RUNNING de este nodo
+                    # ✅ CRÍTICO: Abortar TODAS las ejecuciones PENDING y RUNNING de este nodo
+                    # Incluyendo las que ya están en ejecución (RUNNING con pollers activos)
+                    # Esto es necesario para detener el tráfico SNMP cuando se desactiva la plantilla
                     pending_executions = Execution.objects.filter(
                         workflow_node=workflow_node,
                         status__in=['PENDING', 'RUNNING']
+                        # ✅ IMPORTANTE: Abortar TODAS, incluso las que tienen celery_task_id
+                        # Los pollers GET verifican si la ejecución está INTERRUPTED antes de procesar
                     )
                     
                     canceled_count = pending_executions.update(
@@ -706,6 +728,20 @@ def handle_task_template_status_change(sender, instance, created, **kwargs):
                         finished_at=timezone.now(),
                         error_message=f"Plantilla '{instance.name}' desactivada"
                     )
+                    
+                    # Para ejecuciones GET en RUNNING, también necesitamos cancelar los pollers activos
+                    # Esto se hace marcando la ejecución como INTERRUPTED, y los pollers lo detectan
+                    running_get_executions = Execution.objects.filter(
+                        workflow_node=workflow_node,
+                        status='INTERRUPTED',  # Ya fueron marcadas como INTERRUPTED arriba
+                        snmp_job__job_type='get'
+                    )
+                    
+                    if running_get_executions.exists():
+                        logger.info(
+                            f"   🛑 {running_get_executions.count()} ejecución(es) GET en RUNNING abortada(s), "
+                            f"los pollers detectarán INTERRUPTED y se detendrán"
+                        )
                     
                     total_canceled += canceled_count
                     

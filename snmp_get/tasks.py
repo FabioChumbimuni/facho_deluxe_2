@@ -263,6 +263,32 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
     batch_size = len(onu_batch)
     logger.info(f"📡 get_poller_task [depth={depth}]: Procesando {batch_size} ONUs para OLT {olt_id}")
     
+    # ✅ CRÍTICO: Verificar si la ejecución fue abortada (INTERRUPTED)
+    # Esto permite detener pollers cuando se desactiva una plantilla
+    try:
+        execution = Execution.objects.get(pk=execution_id)
+        if execution.status == 'INTERRUPTED':
+            logger.warning(f"🛑 Ejecución {execution_id} está INTERRUPTED, abortando poller")
+            # Liberar slot de poller antes de salir
+            release_olt_poller_slot(olt_id)
+            return {
+                'status': 'aborted',
+                'reason': f'Ejecución {execution_id} fue interrumpida',
+                'success_count': 0,
+                'error_count': 0,
+                'total_processed': 0
+            }
+    except Execution.DoesNotExist:
+        logger.error(f"❌ Ejecución {execution_id} no existe, abortando poller")
+        release_olt_poller_slot(olt_id)
+        return {
+            'status': 'error',
+            'reason': f'Ejecución {execution_id} no existe',
+            'success_count': 0,
+            'error_count': 0,
+            'total_processed': 0
+        }
+    
     # Esperar y adquirir slot de poller para la OLT (control de pollers concurrentes)
     if not wait_for_olt_slot(olt_id, max_wait=60):
         logger.error(f"❌ No se pudo adquirir slot de poller para OLT {olt_id}, reencolando...")
@@ -316,6 +342,48 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
             
             # Procesar cada ONU en el lote
             for onu_data in onu_batch:
+                # ✅ CRÍTICO: Verificar periódicamente si la ejecución fue abortada
+                # Esto permite detener el procesamiento en medio de un lote
+                try:
+                    execution_check = Execution.objects.get(pk=execution_id)
+                    if execution_check.status == 'INTERRUPTED':
+                        logger.warning(f"🛑 Ejecución {execution_id} fue INTERRUPTED durante procesamiento, abortando poller")
+                        # Marcar el poller como completado con los procesados hasta ahora
+                        success_count_so_far = success_count
+                        error_count_so_far = error_count
+                        total_processed_so_far = success_count_so_far + error_count_so_far
+                        
+                        # Marcar como completado con lo procesado hasta ahora
+                        task_id = getattr(self.request, 'id', None)
+                        if task_id:
+                            try:
+                                _mark_poller_completion(
+                                    execution_id=execution_id,
+                                    task_id=task_id,
+                                    success_count=success_count_so_far,
+                                    error_count=error_count_so_far,
+                                    total_processed=total_processed_so_far
+                                )
+                            except Exception:
+                                pass
+                        
+                        return {
+                            'status': 'aborted',
+                            'reason': f'Ejecución {execution_id} fue interrumpida',
+                            'success_count': success_count_so_far,
+                            'error_count': error_count_so_far,
+                            'total_processed': total_processed_so_far
+                        }
+                except Execution.DoesNotExist:
+                    logger.error(f"❌ Ejecución {execution_id} no existe durante procesamiento, abortando")
+                    return {
+                        'status': 'error',
+                        'reason': f'Ejecución {execution_id} no existe',
+                        'success_count': success_count,
+                        'error_count': error_count,
+                        'total_processed': success_count + error_count
+                    }
+                
                 # Inicializar variables para evitar error en except si falla antes
                 normalized_id = onu_data.get('normalized_id', 'UNKNOWN')
                 raw_index_key = onu_data.get('raw_index_key', 'UNKNOWN')
@@ -709,11 +777,15 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                 try:
                     execution_obj = Execution.objects.select_related('snmp_job', 'olt').get(pk=execution_id)
                     job_name = execution_obj.snmp_job.nombre if execution_obj.snmp_job else f"Job {completion_info.get('snmp_job_id')}"
-                    event_type = 'EXECUTION_COMPLETED' if completion_info['status'] == 'SUCCESS' else 'EXECUTION_FAILED'
-                    decision = 'COMPLETE' if completion_info['status'] == 'SUCCESS' else 'ABORT'
+                    # ✅ La ejecución siempre es SUCCESS si se completa (es normal que algunos GET fallen)
+                    # Los errores se reportan en el resumen pero no cambian el estado
+                    event_type = 'EXECUTION_COMPLETED'  # Siempre COMPLETED si se finalizó
+                    decision = 'COMPLETE'
+                    # Incluir resumen de errores en el reason si los hay (para información)
+                    error_onus = completion_info.get('error_onus', 0)
                     reason = None
-                    if completion_info['status'] != 'SUCCESS':
-                        reason = f"{completion_info.get('error_onus', 0)} ONUs con error en pollers"
+                    if error_onus > 0:
+                        reason = f"Ejecución completada con {error_onus} ONUs con error (normal en GET)"
                     
                     summary_details = {
                         'execution_id': completion_info['execution_id'],
@@ -734,43 +806,26 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
                         details=summary_details,
                     )
                     
-                    if completion_info['status'] == 'SUCCESS':
-                        coordinator_logger.log_execution_completed(
-                            job_name,
-                            completion_info.get('duration_ms', 0),
-                            olt=execution_obj.olt,
-                            details=summary_details,
+                    # ✅ Siempre es SUCCESS si se completó (todos los pollers terminaron)
+                    # Los errores individuales se reportan en el resumen pero no hacen FAILED la ejecución
+                    coordinator_logger.log_execution_completed(
+                        job_name,
+                        completion_info.get('duration_ms', 0),
+                        olt=execution_obj.olt,
+                        details=summary_details,
+                    )
+                    try:
+                        from execution_utils.callbacks import on_task_completed
+                        on_task_completed(
+                            olt_id=execution_obj.olt_id,
+                            task_name=job_name,
+                            task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
+                            duration_ms=completion_info.get('duration_ms', 0),
+                            status='SUCCESS',  # Siempre SUCCESS si se completó
+                            execution_id=execution_obj.id
                         )
-                        try:
-                            from execution_utils.callbacks import on_task_completed
-                            on_task_completed(
-                                olt_id=execution_obj.olt_id,
-                                task_name=job_name,
-                                task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
-                                duration_ms=completion_info.get('duration_ms', 0),
-                                status='SUCCESS',
-                                execution_id=execution_obj.id  # ← NUEVO: Para actualizar WorkflowNode
-                            )
-                        except Exception as callback_error:
-                            logger.warning(f"Error en callback coordinator (completed): {callback_error}")
-                    else:
-                        coordinator_logger.log_execution_failed(
-                            job_name,
-                            reason or 'Errores en pollers GET',
-                            olt=execution_obj.olt,
-                            details=summary_details,
-                        )
-                        try:
-                            from execution_utils.callbacks import on_task_failed
-                            on_task_failed(
-                                olt_id=execution_obj.olt_id,
-                                task_name=job_name,
-                                task_type=execution_obj.snmp_job.job_type if execution_obj.snmp_job else 'get',
-                                error_message=reason or 'Errores en pollers GET',
-                                execution_id=execution_obj.id
-                            )
-                        except Exception as callback_error:
-                            logger.warning(f"Error en callback coordinator (failed): {callback_error}")
+                    except Exception as callback_error:
+                        logger.warning(f"Error en callback coordinator (completed): {callback_error}")
                 except Exception as finalization_error:
                     logger.error(f"❌ Error registrando finalización de ejecución {execution_id}: {finalization_error}")
             
@@ -795,6 +850,24 @@ def get_poller_task(self, onu_batch, olt_id, oid_string, snmp_config, execution_
     
     except Exception as e:
         logger.error(f"❌ Error general en get_poller_task [depth={depth}]: {str(e)}")
+        
+        # ✅ CRÍTICO: Asegurar que se marque como completado incluso si falla
+        # Esto evita que las ejecuciones queden en RUNNING indefinidamente
+        task_id = self.request.id if hasattr(self, 'request') else None
+        if task_id:
+            try:
+                # Marcar como completado con error_count = batch_size (todas fallaron)
+                _mark_poller_completion(
+                    execution_id=execution_id,
+                    task_id=task_id,
+                    success_count=0,
+                    error_count=batch_size,
+                    total_processed=batch_size
+                )
+                logger.info(f"✅ Poller {task_id[:8]} marcado como completado con errores después de excepción")
+            except Exception as mark_error:
+                logger.error(f"❌ Error marcando poller como completado: {mark_error}")
+        
         raise
     finally:
         # SIEMPRE liberar el slot de poller (contador de pollers concurrentes)
@@ -827,6 +900,18 @@ def execute_get_main(snmp_job_id, olt_id, execution_id, queue_name='get_main', a
         job = SnmpJob.objects.select_related('oid', 'marca').get(id=snmp_job_id)
         olt = OLT.objects.get(id=olt_id)
         execution = Execution.objects.get(id=execution_id)
+        
+        # ✅ CRÍTICO: Verificar si la ejecución fue abortada (INTERRUPTED)
+        # Esto permite detener la ejecución antes de encolar pollers
+        if execution.status == 'INTERRUPTED':
+            logger.warning(f"🛑 Ejecución {execution_id} está INTERRUPTED, abortando antes de encolar pollers")
+            execution.finished_at = timezone.now()
+            if not execution.started_at:
+                execution.started_at = timezone.now()
+            if execution.started_at and execution.finished_at:
+                execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+            execution.save(update_fields=['finished_at', 'started_at', 'duration_ms'])
+            return  # Abortar sin encolar pollers
         
         # Obtener configuración específica para GET desde BD
         config_snmp = ConfiguracionSNMP.get_config_for_tipo('get')
@@ -1236,11 +1321,15 @@ def _mark_poller_completion(execution_id, task_id, success_count, error_count, t
         execution.result_summary = summary
         updates = ['result_summary']
         
-        has_errors = summary.get('error_onus', 0) > 0
+        # ✅ IMPORTANTE: Es normal que algunos GET fallen individualmente
+        # La ejecución se marca como SUCCESS siempre que se complete, independientemente de errores
+        # Los errores se reportan en el resumen (error_onus, failed_batches) pero no hacen FAILED la ejecución
         execution_completed = (total_batches == 0) or (completed_batches >= total_batches)
         
         if execution_completed:
-            final_status = 'FAILED' if has_errors else 'SUCCESS'
+            # ✅ La ejecución siempre es SUCCESS si se completó (todos los pollers terminaron)
+            # Los errores individuales se reportan en result_summary pero no cambian el estado
+            final_status = 'SUCCESS'
             if execution.status != final_status:
                 execution.status = final_status
                 updates.append('status')
@@ -1268,3 +1357,201 @@ def _mark_poller_completion(execution_id, task_id, success_count, error_count, t
         execution.save(update_fields=updates)
     
     return completion_payload
+
+
+
+@shared_task(queue='cleanup', bind=True)
+def sync_pending_get_executions_with_celery(self, max_age_minutes=10):
+    """
+    Sincroniza ejecuciones GET en estado RUNNING con el estado real de sus pollers en Celery.
+    Marca como completados los pollers que ya terminaron pero no se marcaron en la BD.
+    Finaliza ejecuciones cuando todos los pollers han terminado.
+    
+    Args:
+        max_age_minutes: Solo verificar ejecuciones más antiguas que este tiempo (default: 10 min)
+    """
+    from executions.models import Execution
+    from celery import Celery
+    from django.conf import settings
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    app = Celery('facho_deluxe_2')
+    app.config_from_object('django.conf:settings', namespace='CELERY')
+    
+    logger.info(f"🧹 Iniciando sincronización de ejecuciones GET RUNNING con Celery (más de {max_age_minutes} minutos)")
+    
+    cutoff_time = timezone.now() - timedelta(minutes=max_age_minutes)
+    
+    # Buscar ejecuciones GET en estado RUNNING que sean antiguas
+    running_executions = Execution.objects.filter(
+        status='RUNNING',
+        snmp_job__job_type='get',
+        created_at__lt=cutoff_time
+    ).select_related('snmp_job', 'olt')
+    
+    checked_count = 0
+    updated_count = 0
+    
+    for exec_obj in running_executions:
+        checked_count += 1
+        summary = exec_obj.result_summary or {}
+        poller_tasks = summary.get('poller_tasks', [])
+        total_batches = summary.get('total_batches', 0) or 0
+        completed_batches = summary.get('completed_batches', 0) or 0
+        
+        if not poller_tasks or total_batches == 0:
+            continue
+        
+        # Verificar cada poller task
+        needs_update = False
+        for task_info in poller_tasks:
+            task_id = task_info.get('task_id')
+            completed = task_info.get('completed', False)
+            
+            if task_id and not completed:
+                try:
+                    result = app.AsyncResult(task_id)
+                    
+                    # Si el poller ya terminó (SUCCESS o FAILURE) pero no está marcado como completado
+                    if result.ready():
+                        needs_update = True
+                        
+                        if result.successful():
+                            # Poller exitoso - obtener resultados si están disponibles
+                            try:
+                                poller_result = result.result
+                                success_count = poller_result.get('success_count', 0) if isinstance(poller_result, dict) else 0
+                                error_count = poller_result.get('error_count', 0) if isinstance(poller_result, dict) else 0
+                                total_processed = poller_result.get('total_processed', 0) if isinstance(poller_result, dict) else 0
+                            except:
+                                # Si no se pueden obtener resultados, asumir que procesó el batch completo
+                                success_count = task_info.get('batch_size', 0)
+                                error_count = 0
+                                total_processed = task_info.get('batch_size', 0)
+                            
+                            # Marcar como completado
+                            completion_info = _mark_poller_completion(
+                                execution_id=exec_obj.id,
+                                task_id=task_id,
+                                success_count=success_count,
+                                error_count=error_count,
+                                total_processed=total_processed
+                            )
+                            
+                            logger.info(
+                                f"✅ Poller {task_id[:8]}... sincronizado: SUCCESS "
+                                f"(success={success_count}, error={error_count})"
+                            )
+                            
+                            # Si la ejecución se completó, procesar el evento
+                            if completion_info:
+                                logger.info(
+                                    f"✅ Ejecución {exec_obj.id} finalizada por sincronización: "
+                                    f"{completion_info['status']}"
+                                )
+                                updated_count += 1
+                                
+                                # Llamar callbacks
+                                try:
+                                    from execution_utils.callbacks import on_task_completed, on_task_failed
+                                    if completion_info['status'] == 'SUCCESS':
+                                        on_task_completed(
+                                            olt_id=exec_obj.olt_id,
+                                            task_name=exec_obj.snmp_job.nombre if exec_obj.snmp_job else 'GET',
+                                            task_type='get',
+                                            duration_ms=completion_info.get('duration_ms', 0),
+                                            status='SUCCESS',
+                                            execution_id=exec_obj.id
+                                        )
+                                    else:
+                                        on_task_failed(
+                                            olt_id=exec_obj.olt_id,
+                                            task_name=exec_obj.snmp_job.nombre if exec_obj.snmp_job else 'GET',
+                                            task_type='get',
+                                            error_message=f"{completion_info.get('error_onus', 0)} ONUs con error",
+                                            execution_id=exec_obj.id
+                                        )
+                                except Exception as callback_error:
+                                    logger.warning(f"Error en callbacks: {callback_error}")
+                        
+                        elif result.failed():
+                            # Poller falló - marcar como completado con errores
+                            batch_size = task_info.get('batch_size', 0)
+                            completion_info = _mark_poller_completion(
+                                execution_id=exec_obj.id,
+                                task_id=task_id,
+                                success_count=0,
+                                error_count=batch_size,
+                                total_processed=batch_size
+                            )
+                            
+                            logger.info(
+                                f"✅ Poller {task_id[:8]}... sincronizado: FAILURE "
+                                f"(error_count={batch_size})"
+                            )
+                            
+                            # Si la ejecución se completó, procesar el evento
+                            if completion_info:
+                                logger.info(
+                                    f"✅ Ejecución {exec_obj.id} finalizada por sincronización: "
+                                    f"{completion_info['status']}"
+                                )
+                                updated_count += 1
+                                
+                                # Llamar callback de fallo
+                                try:
+                                    from execution_utils.callbacks import on_task_failed
+                                    on_task_failed(
+                                        olt_id=exec_obj.olt_id,
+                                        task_name=exec_obj.snmp_job.nombre if exec_obj.snmp_job else 'GET',
+                                        task_type='get',
+                                        error_message=f"{completion_info.get('error_onus', 0)} ONUs con error",
+                                        execution_id=exec_obj.id
+                                    )
+                                except Exception as callback_error:
+                                    logger.warning(f"Error en callback: {callback_error}")
+                
+                except Exception as sync_error:
+                    logger.error(f"❌ Error sincronizando poller {task_id[:8]}...: {sync_error}")
+        
+        # Si no se actualizó nada pero hay pollers colgados en STARTED por mucho tiempo
+        if not needs_update:
+            # Verificar si hay pollers en STARTED por más de 5 minutos
+            for task_info in poller_tasks:
+                task_id = task_info.get('task_id')
+                completed = task_info.get('completed', False)
+                
+                if task_id and not completed:
+                    try:
+                        result = app.AsyncResult(task_id)
+                        if result.status == 'STARTED':
+                            # Verificar cuánto tiempo lleva en STARTED
+                            # (No podemos saber exactamente, pero si la ejecución es antigua, probablemente está colgado)
+                            time_elapsed = (timezone.now() - exec_obj.created_at).total_seconds()
+                            if time_elapsed > 600:  # Más de 10 minutos
+                                logger.warning(
+                                    f"⚠️ Poller {task_id[:8]}... está en STARTED por mucho tiempo, "
+                                    f"marcando como fallido"
+                                )
+                                
+                                # Marcar como fallido
+                                batch_size = task_info.get('batch_size', 0)
+                                completion_info = _mark_poller_completion(
+                                    execution_id=exec_obj.id,
+                                    task_id=task_id,
+                                    success_count=0,
+                                    error_count=batch_size,
+                                    total_processed=batch_size
+                                )
+                                
+                                if completion_info:
+                                    logger.info(
+                                        f"✅ Ejecución {exec_obj.id} finalizada después de marcar poller colgado como fallido"
+                                    )
+                                    updated_count += 1
+                    except:
+                        pass
+    
+    logger.info(f"✅ Sincronización completada. Chequeadas: {checked_count}, Actualizadas: {updated_count}")
+    return {'status': 'success', 'checked': checked_count, 'updated': updated_count}
