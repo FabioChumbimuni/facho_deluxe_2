@@ -29,5 +29,5 @@ urlpatterns = [
     # ✅ DESHABILITADO: Dashboard del coordinador antiguo ya no es necesario con el sistema de pollers Zabbix
     # path('coordinator/', include('execution_coordinator.urls')),
     # API REST
-    path('api/v1/', include('api.urls')),
+    path('api/', include('api.urls')),
 ]

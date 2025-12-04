@@ -17,10 +17,34 @@ import configparser
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Leer configuración desde config.ini
-config = configparser.ConfigParser()
-config_path = os.path.join(BASE_DIR, 'config.ini')
-config.read(config_path)
+# Leer configuración desde dos archivos separados
+# - backend.conf: Configuración del backend (BD, API, sistema)
+# - https.conf: Configuración HTTPS (opcional)
+backend_config_path = '/etc/facho_deluxe_2/backend.conf'
+https_config_path = '/etc/facho_deluxe_2/https.conf'
+
+# Verificar archivo de backend (obligatorio)
+if not os.path.exists(backend_config_path):
+    raise FileNotFoundError(
+        f"Archivo de configuración no encontrado: {backend_config_path}\n"
+        f"Ejecuta el script de despliegue: sudo ./deploy_backend.sh\n"
+        f"O crea manualmente el archivo de configuración."
+    )
+
+if not os.access(backend_config_path, os.R_OK):
+    raise PermissionError(
+        f"No se puede leer el archivo de configuración: {backend_config_path}\n"
+        f"Verifica los permisos del archivo. Debe ser legible por el usuario que ejecuta Django."
+    )
+
+# Leer configuración del backend
+backend_config = configparser.ConfigParser()
+backend_config.read(backend_config_path)
+
+# Leer configuración HTTPS (opcional)
+https_config = configparser.ConfigParser()
+if os.path.exists(https_config_path) and os.access(https_config_path, os.R_OK):
+    https_config.read(https_config_path)
 
 
 # Quick-start development settings - unsuitable for production
@@ -32,11 +56,64 @@ SECRET_KEY = 'django-insecure-vyeue=sj-%&g2l%n8l(9g76mh)=bzac4th384k7!%ly3w=asr9
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [
-    config.get('deployment', 'bind_ip', fallback='0.0.0.0'),
-    'localhost',
-    '127.0.0.1'
+# Obtener IP de la API desde backend.conf
+api_ip = backend_config.get('api', 'api_ip', fallback='0.0.0.0')
+
+# Configuración HTTPS desde https.conf (opcional)
+protocol = https_config.get('https', 'protocol', fallback='http') if https_config.has_section('https') else 'http'
+https_domain = https_config.get('https', 'https_domain', fallback=None) if https_config.has_section('https') else None
+
+# Construir ALLOWED_HOSTS
+allowed_hosts_list = [api_ip, 'localhost', '127.0.0.1']
+if https_domain:
+    allowed_hosts_list.append(https_domain)
+if protocol == 'http':
+    allowed_hosts_list.append('*')  # Permitir todos en HTTP
+
+ALLOWED_HOSTS = allowed_hosts_list
+
+# Configuración de seguridad HTTPS (si protocol = https)
+if protocol == 'https':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = False  # NGINX maneja la redirección
+
+# Configuración CSRF - Orígenes confiables
+# Incluir el backend y el frontend
+frontend_config_path = '/etc/facho-frontend/frontend.conf'
+
+csrf_trusted_origins = [
+    f'https://{api_ip}',  # Backend
+    f'http://{api_ip}',   # Backend HTTP (si aplica)
 ]
+if https_domain:
+    csrf_trusted_origins.append(f'https://{https_domain}')
+    csrf_trusted_origins.append(f'http://{https_domain}')
+
+# Agregar origen del frontend si existe la configuración
+if os.path.exists(frontend_config_path) and os.access(frontend_config_path, os.R_OK):
+    try:
+        frontend_config = configparser.ConfigParser()
+        frontend_config.read(frontend_config_path)
+        if frontend_config.has_section('frontend'):
+            frontend_ip = frontend_config.get('frontend', 'frontend_ip', fallback=None)
+            frontend_port = frontend_config.get('frontend', 'frontend_port', fallback=None)
+            frontend_protocol = frontend_config.get('frontend', 'protocol', fallback='https')
+            if frontend_ip and frontend_port:
+                frontend_url = f"{frontend_protocol}://{frontend_ip}:{frontend_port}"
+                if frontend_url not in csrf_trusted_origins:
+                    csrf_trusted_origins.append(frontend_url)
+    except Exception:
+        pass  # Si hay error leyendo la configuración, usar solo los valores por defecto
+
+# Si no se encontró configuración del frontend, agregar puerto 8443 por defecto si es la misma IP
+if api_ip == '10.80.80.229':
+    default_frontend = f'https://{api_ip}:8443'
+    if default_frontend not in csrf_trusted_origins:
+        csrf_trusted_origins.append(default_frontend)
+
+CSRF_TRUSTED_ORIGINS = csrf_trusted_origins
 
 
 # Application definition
@@ -111,11 +188,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config.get('database', 'name', fallback='dbname'),
-        'USER': config.get('database', 'user', fallback='dbuser'),
-        'PASSWORD': config.get('database', 'password', fallback='change_me_in_config_ini'),
-        'HOST': config.get('database', 'host', fallback='localhost'),
-        'PORT': config.get('database', 'port', fallback='5432'),
+        'NAME': backend_config.get('database', 'name', fallback='dbname'),
+        'USER': backend_config.get('database', 'user', fallback='dbuser'),
+        'PASSWORD': backend_config.get('database', 'password', fallback='change_me_in_config_ini'),
+        'HOST': backend_config.get('database', 'host', fallback='localhost'),
+        'PORT': backend_config.get('database', 'port', fallback='5432'),
     }
 }
 
@@ -238,6 +315,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'snmp_get.cleanup_tasks.cleanup_interrupted_executions',
         'schedule': 1800.0,  # Cada 30 minutos - limpiar ejecuciones GET interrumpidas
     },
+    # ✅ DESACTIVADO: sync-pending-executions-with-celery
+    # Los errores de EasySNMP se manejan automáticamente en el bloque except
+    # No se necesita un proceso periódico que descarte ejecuciones
+    # 'sync-pending-executions-with-celery': {
+    #     'task': 'snmp_jobs.cleanup_tasks.sync_pending_executions_with_celery',
+    #     'schedule': 300.0,  # Cada 5 minutos - sincronizar ejecuciones PENDING con estado real de Celery
+    # },
 }
 
 # Configuración de timeouts para tareas de descubrimiento
@@ -274,14 +358,14 @@ REST_FRAMEWORK = {
     # Esquema de API (para documentación automática)
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     
-    # Autenticación
+    # Autenticación - API Key personalizada (x-api-key header)
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.BasicAuthentication',
+        'api.authentication.APIKeyAuthentication',  # Autenticación personalizada con x-api-key
+        # SessionAuthentication y BasicAuthentication deshabilitados para producción
+        # Solo se permite autenticación por API Key
     ],
     
-    # Permisos
+    # Permisos - Requiere autenticación por defecto
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
@@ -297,10 +381,11 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ],
     
-    # Formato de respuesta
+    # Formato de respuesta - SOLO JSON para producción
+    # BrowsableAPIRenderer deshabilitado para mayor seguridad
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
+        # BrowsableAPIRenderer deshabilitado en producción
     ],
     
     # Límite de solicitudes (throttling)
@@ -345,14 +430,33 @@ SPECTACULAR_SETTINGS = {
 }
 
 # Configuración de CORS (Cross-Origin Resource Sharing)
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',  # React/Vite frontend
+# Leer configuración del frontend si existe (frontend_config_path ya definido arriba)
+frontend_origins = [
+    'http://localhost:3000',  # React/Vite frontend (desarrollo)
     'http://127.0.0.1:3000',
     'http://localhost:4200',  # Angular (opcional)
     'http://localhost:8080',  # Vue.js (opcional)
     'http://127.0.0.1:4200',
     'http://127.0.0.1:8080',
 ]
+
+# Agregar origen del frontend en producción si existe la configuración
+if os.path.exists(frontend_config_path) and os.access(frontend_config_path, os.R_OK):
+    try:
+        frontend_config = configparser.ConfigParser()
+        frontend_config.read(frontend_config_path)
+        if frontend_config.has_section('frontend'):
+            frontend_ip = frontend_config.get('frontend', 'frontend_ip', fallback=None)
+            frontend_port = frontend_config.get('frontend', 'frontend_port', fallback=None)
+            frontend_protocol = frontend_config.get('frontend', 'protocol', fallback='https')
+            if frontend_ip and frontend_port:
+                frontend_url = f"{frontend_protocol}://{frontend_ip}:{frontend_port}"
+                if frontend_url not in frontend_origins:
+                    frontend_origins.append(frontend_url)
+    except Exception:
+        pass  # Si hay error leyendo la configuración, usar solo los valores por defecto
+
+CORS_ALLOWED_ORIGINS = frontend_origins
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -366,6 +470,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-api-key',  # Header para autenticación personalizada
 ]
 
 # Configuración de sincronización ODF

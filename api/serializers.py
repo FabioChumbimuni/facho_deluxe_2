@@ -13,7 +13,7 @@ from executions.models import Execution
 from discovery.models import OnuIndexMap, OnuStateLookup, OnuInventory
 from oids.models import OID
 from snmp_formulas.models import IndexFormula
-from odf_management.models import ODF, ODFHilos, ZabbixPortData
+from odf_management.models import ODF, ODFHilos, ZabbixPortData, ZabbixCollectionSchedule, ZabbixCollectionOLT
 from personal.models import Personal, Area
 from zabbix_config.models import ZabbixConfiguration
 from configuracion_avanzada.models import ConfiguracionSistema, ConfiguracionSNMP
@@ -229,6 +229,7 @@ class OnuInventorySerializer(serializers.ModelSerializer):
     logical = serializers.IntegerField(source='onu_index.logical', read_only=True, allow_null=True)
     normalized_id = serializers.CharField(source='onu_index.normalized_id', read_only=True)
     raw_index_key = serializers.CharField(source='onu_index.raw_index_key', read_only=True)
+    snmpindexonu = serializers.CharField(source='onu_index.raw_index_key', read_only=True, help_text="Índice SNMP de la ONU (alias de raw_index_key)")
     
     # Campos para CREAR la ONU (solo escritura)
     slot_input = serializers.IntegerField(write_only=True, required=False,
@@ -269,7 +270,7 @@ class OnuInventorySerializer(serializers.ModelSerializer):
             # OLT
             'olt', 'olt_nombre',
             # Índice (slot/port/logical) - lectura
-            'slot', 'port', 'logical', 'normalized_id', 'raw_index_key',
+            'slot', 'port', 'logical', 'normalized_id', 'raw_index_key', 'snmpindexonu',
             # Campos de entrada para crear ONU - escritura
             'slot_input', 'port_input', 'logical_input', 'raw_index_key_input', 'estado_input', 'presence_input',
             # Identificación
@@ -494,12 +495,13 @@ class OnuInventoryListSerializer(serializers.ModelSerializer):
     slot = serializers.IntegerField(source='onu_index.slot', read_only=True, allow_null=True)
     port = serializers.IntegerField(source='onu_index.port', read_only=True, allow_null=True)
     logical = serializers.IntegerField(source='onu_index.logical', read_only=True, allow_null=True)
+    snmpindexonu = serializers.CharField(source='onu_index.raw_index_key', read_only=True, help_text="Índice SNMP de la ONU")
     presence = serializers.SerializerMethodField()
     estado = serializers.SerializerMethodField()
     
     class Meta:
         model = OnuInventory
-        fields = ['id', 'olt_nombre', 'slot', 'port', 'logical', 
+        fields = ['id', 'olt_nombre', 'slot', 'port', 'logical', 'snmpindexonu',
                   'serial_number', 'plan_onu', 'modelo_onu', 'distancia_onu',
                   'snmp_description', 'presence', 'estado']
     
@@ -650,18 +652,74 @@ class ODFSerializer(serializers.ModelSerializer):
 
 class ODFHilosSerializer(serializers.ModelSerializer):
     """Serializer para hilos de ODF"""
-    odf_nombre = serializers.CharField(source='odf.nombre', read_only=True)
+    odf_nombre = serializers.CharField(source='odf.nombre_troncal', read_only=True)
+    odf_olt = serializers.CharField(source='odf.olt.abreviatura', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    zabbix_port_estado_administrativo = serializers.IntegerField(
+        source='zabbix_port.estado_administrativo', 
+        read_only=True, 
+        allow_null=True
+    )
+    en_zabbix_display = serializers.SerializerMethodField()
+    personal_proyectos_nombre = serializers.CharField(
+        source='personal_proyectos.nombre_completo', 
+        read_only=True, 
+        allow_null=True
+    )
+    personal_noc_nombre = serializers.CharField(
+        source='personal_noc.nombre_completo', 
+        read_only=True, 
+        allow_null=True
+    )
+    tecnico_habilitador_nombre = serializers.CharField(
+        source='tecnico_habilitador.nombre_completo', 
+        read_only=True, 
+        allow_null=True
+    )
     
     class Meta:
         model = ODFHilos
-        fields = ['id', 'odf', 'odf_nombre', 'slot', 'port', 'hilo_numero', 
+        fields = ['id', 'odf', 'odf_nombre', 'odf_olt', 'slot', 'port', 'hilo_numero', 
                   'vlan', 'estado', 'estado_display', 'descripcion_manual', 
-                  'origen', 'en_zabbix', 'operativo_noc',
+                  'origen', 'en_zabbix', 'en_zabbix_display', 'operativo_noc',
+                  'zabbix_port_estado_administrativo',
                   'fecha_habilitacion', 'hora_habilitacion', 
-                  'personal_proyectos', 'personal_noc', 'tecnico_habilitador',
+                  'personal_proyectos', 'personal_proyectos_nombre',
+                  'personal_noc', 'personal_noc_nombre',
+                  'tecnico_habilitador', 'tecnico_habilitador_nombre',
                   'created_at', 'updated_at']
         read_only_fields = ['estado', 'origen', 'en_zabbix', 'created_at', 'updated_at']  # Gestionados por scripts
+    
+    def get_en_zabbix_display(self, obj):
+        """Muestra el estado en Zabbix igual que en el admin"""
+        if not obj.en_zabbix:
+            return {
+                'text': 'No presente en Zabbix',
+                'color': 'gray',
+                'estado': 'no_presente'
+            }
+        
+        # Si está en Zabbix, verificar estado administrativo del puerto asociado
+        if obj.zabbix_port and obj.zabbix_port.estado_administrativo is not None:
+            if obj.zabbix_port.estado_administrativo == 1:
+                return {
+                    'text': 'ACTIVO',
+                    'color': 'green',
+                    'estado': 'activo'
+                }
+            elif obj.zabbix_port.estado_administrativo == 2:
+                return {
+                    'text': 'NO ACTIVO',
+                    'color': 'orange',
+                    'estado': 'no_activo'
+                }
+        
+        # Si está en Zabbix pero no tiene estado administrativo
+        return {
+            'text': 'Error 1',
+            'color': 'red',
+            'estado': 'error'
+        }
 
 
 class ZabbixPortDataSerializer(serializers.ModelSerializer):
@@ -675,6 +733,91 @@ class ZabbixPortDataSerializer(serializers.ModelSerializer):
                   'estado_administrativo', 'operativo_noc', 
                   'last_sync', 'created_at']
         read_only_fields = ['last_sync', 'created_at']
+    
+    def validate(self, data):
+        """Validar que olt y snmp_index sean únicos juntos"""
+        if self.instance is None:  # Creando nuevo
+            if 'olt' in data and 'snmp_index' in data:
+                if ZabbixPortData.objects.filter(olt=data['olt'], snmp_index=data['snmp_index']).exists():
+                    raise serializers.ValidationError({
+                        'snmp_index': 'Ya existe un puerto con este SNMP index para esta OLT.'
+                    })
+        else:  # Actualizando
+            if 'olt' in data or 'snmp_index' in data:
+                olt = data.get('olt', self.instance.olt)
+                snmp_index = data.get('snmp_index', self.instance.snmp_index)
+                if ZabbixPortData.objects.filter(olt=olt, snmp_index=snmp_index).exclude(pk=self.instance.pk).exists():
+                    raise serializers.ValidationError({
+                        'snmp_index': 'Ya existe un puerto con este SNMP index para esta OLT.'
+                    })
+        return data
+
+
+class ZabbixCollectionScheduleSerializer(serializers.ModelSerializer):
+    """Serializer para programaciones de recolección Zabbix"""
+    intervalo_display = serializers.CharField(source='get_intervalo_minutos_display', read_only=True)
+    olts_asociadas_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = ZabbixCollectionSchedule
+        fields = ['id', 'nombre', 'intervalo_minutos', 'intervalo_display', 'habilitado',
+                  'proxima_ejecucion', 'ultima_ejecucion', 'olts_asociadas_count',
+                  'created_at', 'updated_at']
+        read_only_fields = ['proxima_ejecucion', 'ultima_ejecucion', 'created_at', 'updated_at']
+    
+    def create(self, validated_data):
+        """Crear programación y calcular próxima ejecución si está habilitada"""
+        instance = super().create(validated_data)
+        if instance.habilitado:
+            instance.calcular_proxima_ejecucion(primera_vez=True)
+            instance.save()
+        return instance
+    
+    def update(self, instance, validated_data):
+        """Actualizar programación y recalcular próxima ejecución si cambió el intervalo"""
+        intervalo_cambio = 'intervalo_minutos' in validated_data and \
+                          validated_data['intervalo_minutos'] != instance.intervalo_minutos
+        
+        instance = super().update(instance, validated_data)
+        
+        # Si cambió el intervalo y está habilitada, recalcular próxima ejecución
+        if intervalo_cambio and instance.habilitado:
+            instance.calcular_proxima_ejecucion(primera_vez=False)
+            instance.save()
+        
+        return instance
+
+
+class ZabbixCollectionOLTSerializer(serializers.ModelSerializer):
+    """Serializer para OLTs en programación de recolección"""
+    schedule_nombre = serializers.CharField(source='schedule.nombre', read_only=True)
+    olt_nombre = serializers.CharField(source='olt.abreviatura', read_only=True)
+    ultimo_estado_display = serializers.CharField(source='get_ultimo_estado_display', read_only=True)
+    
+    class Meta:
+        model = ZabbixCollectionOLT
+        fields = ['id', 'schedule', 'schedule_nombre', 'olt', 'olt_nombre', 'habilitado',
+                  'ultima_recoleccion', 'ultimo_estado', 'ultimo_estado_display', 'ultimo_error',
+                  'created_at']
+        read_only_fields = ['ultima_recoleccion', 'ultimo_estado', 'ultimo_error', 'created_at']
+    
+    def validate(self, data):
+        """Validar que schedule y olt sean únicos juntos"""
+        if self.instance is None:  # Creando nuevo
+            if 'schedule' in data and 'olt' in data:
+                if ZabbixCollectionOLT.objects.filter(schedule=data['schedule'], olt=data['olt']).exists():
+                    raise serializers.ValidationError({
+                        'olt': 'Esta OLT ya está asociada a esta programación.'
+                    })
+        else:  # Actualizando
+            if 'schedule' in data or 'olt' in data:
+                schedule = data.get('schedule', self.instance.schedule)
+                olt = data.get('olt', self.instance.olt)
+                if ZabbixCollectionOLT.objects.filter(schedule=schedule, olt=olt).exclude(pk=self.instance.pk).exists():
+                    raise serializers.ValidationError({
+                        'olt': 'Esta OLT ya está asociada a esta programación.'
+                    })
+        return data
 
 
 # ============================================================================

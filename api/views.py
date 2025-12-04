@@ -45,7 +45,7 @@ from executions.models import Execution
 from discovery.models import OnuIndexMap, OnuStateLookup, OnuInventory, OnuStatus
 from oids.models import OID
 from snmp_formulas.models import IndexFormula
-from odf_management.models import ODF, ODFHilos, ZabbixPortData
+from odf_management.models import ODF, ODFHilos, ZabbixPortData, ZabbixCollectionSchedule, ZabbixCollectionOLT
 from personal.models import Personal, Area
 from zabbix_config.models import ZabbixConfiguration
 from configuracion_avanzada.models import ConfiguracionSistema, ConfiguracionSNMP
@@ -56,8 +56,9 @@ from .serializers import (
     OLTSerializer, OLTListSerializer, SNMPJobSerializer,
     ExecutionSerializer, OnuIndexMapSerializer, OnuStateLookupSerializer,
     OnuInventorySerializer, OnuInventoryListSerializer,
-    OIDSerializer, IndexFormulaSerializer, ODFSerializer, ODFHilosSerializer,
-    ZabbixPortDataSerializer, AreaSerializer, PersonalSerializer,
+    OIDSerializer, IndexFormulaSerializer,     ODFSerializer, ODFHilosSerializer,
+    ZabbixPortDataSerializer, ZabbixCollectionScheduleSerializer, ZabbixCollectionOLTSerializer,
+    AreaSerializer, PersonalSerializer,
     ZabbixConfigSerializer, DashboardStatsSerializer,
     WorkflowTemplateSerializer, WorkflowTemplateNodeSerializer,
     OLTWorkflowSerializer, WorkflowNodeSerializer,
@@ -405,27 +406,58 @@ class OnuInventoryViewSet(viewsets.ModelViewSet):
         'active': ['exact'],
         'plan_onu': ['exact', 'icontains'],
         'modelo_onu': ['exact', 'icontains'],
+        'snmp_description': ['exact', 'icontains'],  # Búsqueda exacta o parcial por descripción SNMP
+        'serial_number': ['exact', 'icontains'],  # Búsqueda exacta o parcial por serial
+        'mac_address': ['exact', 'icontains'],  # Búsqueda exacta o parcial por MAC
+        'subscriber_id': ['exact', 'icontains'],  # Búsqueda exacta o parcial por subscriber_id
         'onu_index__slot': ['exact'],  # Filtrar por slot desde OnuIndexMap
         'onu_index__port': ['exact'],  # Filtrar por port desde OnuIndexMap
         'onu_index__logical': ['exact'],  # Filtrar por logical desde OnuIndexMap
+        'onu_index__status__presence': ['exact'],  # Filtrar por presence (ENABLED/DISABLED)
     }
     search_fields = ['serial_number', 'mac_address', 'subscriber_id', 'snmp_description']
     ordering_fields = ['created_at', 'updated_at', 'snmp_last_collected_at']
     ordering = ['-created_at']
     
     def get_queryset(self):
-        """Excluir ONUs de OLTs eliminadas"""
-        return OnuInventory.objects.select_related(
+        """Excluir ONUs de OLTs eliminadas y solo mostrar presence ENABLED por defecto"""
+        queryset = OnuInventory.objects.select_related(
             'olt', 
             'onu_index', 
             'onu_index__status'
-        ).filter(olt__is_deleted=False)
+        ).filter(
+            olt__is_deleted=False,
+            onu_index__status__presence='ENABLED'  # Solo clientes con presence ENABLED por defecto
+        )
+        return queryset
     
     def get_serializer_class(self):
         """Usar serializer diferente para listado"""
         if self.action == 'list':
             return OnuInventoryListSerializer
         return OnuInventorySerializer
+    
+    @extend_schema(
+        description="Obtener ONUs con presence DISABLED (exclusivo para clientes desactivados)",
+        responses={200: OnuInventoryListSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'], url_path='disable')
+    def disable(self, request):
+        """Obtener solo ONUs con presence DISABLED (exclusivo)"""
+        onus = OnuInventory.objects.select_related(
+            'olt', 
+            'onu_index', 
+            'onu_index__status'
+        ).filter(
+            olt__is_deleted=False,
+            onu_index__status__presence='DISABLED'  # Solo clientes con presence DISABLED
+        )
+        page = self.paginate_queryset(onus)
+        if page is not None:
+            serializer = OnuInventoryListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = OnuInventoryListSerializer(onus, many=True)
+        return Response(serializer.data)
     
     @extend_schema(
         description="Obtener ONUs activas (active=True)",
@@ -771,8 +803,10 @@ class ODFViewSet(viewsets.ModelViewSet):
     filterset_fields = ['olt']
     
     def get_queryset(self):
-        """Excluir ODFs de OLTs eliminadas"""
-        return ODF.objects.select_related('olt').filter(olt__is_deleted=False)
+        """Excluir ODFs de OLTs eliminadas y ODFs sin OLT"""
+        return ODF.objects.select_related('olt').filter(
+            olt__is_deleted=False
+        ).exclude(olt__isnull=True)
 
 
 @extend_schema_view(
@@ -783,29 +817,74 @@ class ODFViewSet(viewsets.ModelViewSet):
 )
 class ODFHilosViewSet(viewsets.ModelViewSet):
     """ViewSet para hilos de ODF"""
-    queryset = ODFHilos.objects.select_related('odf').all()
+    queryset = ODFHilos.objects.select_related(
+        'odf', 'odf__olt', 'zabbix_port', 'zabbix_port__olt',
+        'personal_proyectos', 'personal_noc', 'tecnico_habilitador'
+    ).all()
     serializer_class = ODFHilosSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['odf', 'estado', 'operativo_noc']  # Campos reales del modelo
+    filterset_fields = ['odf', 'odf__olt', 'estado', 'operativo_noc', 'zabbix_port__estado_administrativo']  # Campos reales del modelo
     search_fields = ['descripcion_manual']  # Campo real del modelo
 
 
 @extend_schema_view(
     list=extend_schema(description="Listar datos de puertos de Zabbix"),
     retrieve=extend_schema(description="Obtener detalles de un puerto"),
+    create=extend_schema(description="Crear nuevo puerto Zabbix"),
+    update=extend_schema(description="Actualizar puerto completo"),
+    partial_update=extend_schema(description="Actualizar puerto parcialmente"),
+    destroy=extend_schema(description="Eliminar puerto"),
 )
-class ZabbixPortDataViewSet(viewsets.ReadOnlyModelViewSet):
-    """ViewSet para datos de puertos de Zabbix (solo lectura)"""
+class ZabbixPortDataViewSet(viewsets.ModelViewSet):
+    """ViewSet para datos de puertos de Zabbix (CRUD completo)"""
     serializer_class = ZabbixPortDataSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['olt', 'disponible', 'operativo_noc', 'estado_administrativo']
-    search_fields = ['descripcion_zabbix', 'interface_name']
+    search_fields = ['descripcion_zabbix', 'interface_name', 'snmp_index']
     
     def get_queryset(self):
         """Excluir puertos de OLTs eliminadas"""
         return ZabbixPortData.objects.select_related('olt').filter(olt__is_deleted=False)
+
+
+@extend_schema_view(
+    list=extend_schema(description="Listar programaciones de recolección Zabbix"),
+    retrieve=extend_schema(description="Obtener detalles de una programación"),
+    create=extend_schema(description="Crear nueva programación de recolección"),
+    update=extend_schema(description="Actualizar programación completa"),
+    partial_update=extend_schema(description="Actualizar programación parcialmente"),
+    destroy=extend_schema(description="Eliminar programación"),
+)
+class ZabbixCollectionScheduleViewSet(viewsets.ModelViewSet):
+    """ViewSet para programaciones de recolección Zabbix"""
+    queryset = ZabbixCollectionSchedule.objects.all()
+    serializer_class = ZabbixCollectionScheduleSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['habilitado', 'intervalo_minutos']
+    search_fields = ['nombre']
+    ordering = ['-created_at']
+
+
+@extend_schema_view(
+    list=extend_schema(description="Listar OLTs en programación"),
+    retrieve=extend_schema(description="Obtener detalles de OLT en programación"),
+    create=extend_schema(description="Agregar OLT a programación"),
+    update=extend_schema(description="Actualizar OLT en programación completo"),
+    partial_update=extend_schema(description="Actualizar OLT en programación parcialmente"),
+    destroy=extend_schema(description="Eliminar OLT de programación"),
+)
+class ZabbixCollectionOLTViewSet(viewsets.ModelViewSet):
+    """ViewSet para OLTs en programación de recolección"""
+    queryset = ZabbixCollectionOLT.objects.select_related('schedule', 'olt').all()
+    serializer_class = ZabbixCollectionOLTSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['schedule', 'olt', 'habilitado', 'ultimo_estado']
+    search_fields = ['olt__abreviatura', 'olt__ip_address', 'schedule__nombre']
+    ordering = ['schedule', 'olt']
 
 
 # ============================================================================
@@ -2186,3 +2265,147 @@ def future_executions_list(request):
         'limit': limit,
         'executions': all_executions
     }, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# ENDPOINT AVANZADO: Información de Cliente por DNI con Troncal/ODF
+# ============================================================================
+
+@extend_schema(
+    description="Obtener información de cliente por onudesc: información del cliente, troncal e hilo asignado",
+    parameters=[
+        OpenApiParameter(name='onudesc', type=OpenApiTypes.STR, description='onudesc del cliente (snmp_description exacto)', required=True),
+        OpenApiParameter(name='olt', type=OpenApiTypes.INT, description='ID de la OLT (opcional, para filtrar)', required=False),
+    ],
+    responses={
+        200: {
+            'type': 'object',
+            'properties': {
+                'cliente': {'type': 'object'},
+                'troncal': {'type': 'object'},
+                'hilo': {'type': 'object'}
+            }
+        },
+        404: {'description': 'Cliente no encontrado'}
+    }
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def cliente_info_avanzada(request):
+    """
+    Endpoint que obtiene información de un cliente por onudesc:
+    - Información del cliente
+    - Troncal (nombre_troncal, numero_odf)
+    - Hilo (port_troncal, hilo_numero, vlan)
+    """
+    from discovery.models import OnuInventory, OnuIndexMap
+    from odf_management.models import ODF, ODFHilos
+    from django.db.models import Count, Q
+    
+    onudesc = request.query_params.get('onudesc', '').strip()
+    olt_id = request.query_params.get('olt')
+    
+    if not onudesc:
+        return Response({
+            'success': False,
+            'message': 'El parámetro "onudesc" es obligatorio'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Buscar la ONU por onudesc exacto (solo ENABLED)
+    try:
+        query = OnuInventory.objects.select_related(
+            'olt',
+            'onu_index',
+            'onu_index__status',
+            'onu_index__odf_hilo',
+            'onu_index__odf_hilo__odf'
+        ).filter(
+            snmp_description=onudesc,
+            olt__is_deleted=False,
+            onu_index__status__presence='ENABLED'  # Solo clientes con presence ENABLED
+        )
+        
+        if olt_id:
+            query = query.filter(olt_id=olt_id)
+        
+        onu = query.first()
+        
+        if not onu:
+            return Response({
+                'success': False,
+                'message': f'No se encontró cliente con onudesc: {onudesc} (solo se muestran clientes con presence ENABLED)'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Información del cliente
+        # Obtener onu_status de forma segura (OneToOne puede no existir)
+        from discovery.models import OnuStatus
+        try:
+            onu_status = onu.onu_index.status
+        except OnuStatus.DoesNotExist:
+            onu_status = None
+        except AttributeError:
+            onu_status = None
+        
+        cliente_info = {
+            'id': onu.id,
+            'onudesc': onu.snmp_description,
+            'olt_id': onu.olt.id,
+            'olt_nombre': onu.olt.abreviatura,
+            'slot': onu.onu_index.slot,
+            'port': onu.onu_index.port,
+            'logical': onu.onu_index.logical,
+            'snmpindexonu': onu.onu_index.raw_index_key,
+            'presence': onu_status.presence if onu_status else None,
+            'estado': onu_status.last_state_label if onu_status else None,
+            'active': onu.active,  # Campo interno de OnuInventory
+        }
+        
+        # Información de troncal e hilo
+        troncal_info = None
+        hilo_info = None
+        
+        if onu.onu_index.odf_hilo and onu.onu_index.odf_hilo.odf:
+            odf_hilo = onu.onu_index.odf_hilo
+            odf = odf_hilo.odf
+            
+            # Información de la troncal
+            troncal_info = {
+                'nombre_troncal': odf.nombre_troncal,
+                'numero_odf': odf.numero_odf,
+            }
+            
+            # Información del hilo
+            hilo_info = {
+                'slot': odf_hilo.slot,
+                'port': odf_hilo.port,
+                'hilo_numero': odf_hilo.hilo_numero,
+                'vlan': odf_hilo.vlan,
+            }
+        else:
+            # Si no tiene ODF asignado
+            troncal_info = {
+                'nombre_troncal': None,
+                'numero_odf': None,
+                'mensaje': 'Cliente no tiene troncal/ODF asignado'
+            }
+            hilo_info = {
+                'slot': None,
+                'port': None,
+                'hilo_numero': None,
+                'vlan': None,
+                'mensaje': 'Cliente no tiene hilo asignado'
+            }
+        
+        return Response({
+            'success': True,
+            'cliente': cliente_info,
+            'troncal': troncal_info,
+            'hilo': hilo_info
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error en cliente_info_avanzada: {str(e)}")
+        return Response({
+            'success': False,
+            'message': f'Error al procesar la solicitud: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

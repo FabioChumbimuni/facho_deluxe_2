@@ -349,7 +349,10 @@ class ODFHilos(models.Model):
     port = models.IntegerField(help_text="Número de puerto en el slot")
     
     # Campos definidos manualmente
-    hilo_numero = models.IntegerField(help_text="Número físico del hilo hacia la NAP")
+    hilo_numero = models.CharField(
+        max_length=100,
+        help_text="Número o identificador físico del hilo hacia la NAP (puede ser numérico o texto como 'SPLITTER 5')"
+    )
     vlan = models.IntegerField(help_text="VLAN de conexión configurada")
     descripcion_manual = models.TextField(
         blank=True, 
@@ -543,4 +546,41 @@ class ODFHilos(models.Model):
             self.en_zabbix = True
             self.estado = 'enabled'
         
+        # Guardar primero para tener el ID
         super().save(*args, **kwargs)
+        
+        # ✅ CRÍTICO: Relacionar automáticamente todas las ONUs con el mismo slot/port
+        # Solo si tenemos slot y port definidos
+        if self.slot is not None and self.port is not None:
+            self._relacionar_onus_automatico()
+    
+    def _relacionar_onus_automatico(self):
+        """
+        Busca y relaciona automáticamente todas las ONUs (OnuIndexMap) que tengan
+        el mismo slot/port en la misma OLT con este hilo.
+        """
+        try:
+            from discovery.models import OnuIndexMap
+            
+            # Buscar todas las ONUs de esta OLT con el mismo slot/port que aún no tengan hilo asignado
+            onus_sin_hilo = OnuIndexMap.objects.filter(
+                olt=self.odf.olt,
+                slot=self.slot,
+                port=self.port,
+                odf_hilo__isnull=True
+            )
+            
+            cantidad_relacionadas = onus_sin_hilo.update(odf_hilo=self)
+            
+            if cantidad_relacionadas > 0:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"✅ Hilo {self.id} ({self.identificador_completo}): "
+                    f"{cantidad_relacionadas} ONU(s) relacionada(s) automáticamente"
+                )
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"⚠️ Error relacionando ONUs automáticamente para hilo {self.id}: {e}")

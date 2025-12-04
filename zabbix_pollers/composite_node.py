@@ -220,17 +220,23 @@ class CompositeNode:
                 return existing
             else:
                 # ✅ MEJORADO: Si no hay ejecución pero el lock está activo, puede ser un lock huérfano
-                # Intentar liberar el lock y continuar
+                # Intentar liberar el lock y continuar (solo si somos los dueños)
                 try:
-                    lock.release()
-                    logger.debug(
-                        f"  🔓 Lock huérfano liberado para nodo '{node.name}', continuando con nueva ejecución"
-                    )
-                except:
+                    # Verificar si el lock todavía es propiedad de este proceso antes de liberarlo
+                    if lock.owned():
+                        lock.release()
+                        logger.debug(
+                            f"  🔓 Lock huérfano liberado para nodo '{node.name}', continuando con nueva ejecución"
+                        )
+                    else:
+                        logger.debug(
+                            f"  ⚠️ Lock para nodo '{node.name}' no es propiedad de este proceso, continuando"
+                        )
+                except Exception:
                     # El lock ya fue liberado o no existe, continuar normalmente
                     logger.debug(
-                        f"  ⚠️ No se pudo adquirir lock para nodo '{node.name}' pero no hay Execution activa, "
-                        f"continuando (lock puede estar en otro proceso)"
+                        f"  ⚠️ No se pudo liberar lock para nodo '{node.name}' pero no hay Execution activa, "
+                        f"continuando (lock puede estar en otro proceso o haber expirado)"
                     )
         
         try:
@@ -264,9 +270,12 @@ class CompositeNode:
         finally:
             # Liberar lock después de crear la Execution
             try:
-                lock.release()
-            except:
-                pass  # Ignorar errores al liberar lock
+                # Verificar si el lock todavía es propiedad de este proceso antes de liberarlo
+                # Esto evita el error "Cannot release a lock that's no longer owned"
+                if lock.owned():
+                    lock.release()
+            except Exception:
+                pass  # Ignorar errores al liberar lock (normal si expiró o fue liberado)
         
         # Enviar a Celery según tipo
         try:

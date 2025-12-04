@@ -1,0 +1,25 @@
+# ============================================
+# CONFIGURACIÓN HTTPS - FACHO DELUXE v2
+# ============================================
+# Este archivo contiene configuración HTTPS/SSL.
+# Ubicación: /etc/facho_deluxe_2/https.conf
+# Este archivo contiene información sensible. NO compartir ni subir a git.
+
+[https]
+# Protocolo: http o https
+protocol = https
+
+# Dominio o IP para HTTPS (ej: api.facho.com o 192.168.56.222)
+https_domain = 192.168.56.222
+
+# Puerto HTTPS (por defecto 443)
+https_port = 443
+
+# Rutas de certificados SSL autofirmados (genéricos/gratuitos)
+# NOTA: Solo se generan certificados autofirmados, NO de pago
+ssl_cert_path = /etc/ssl/facho_deluxe_2/facho-backend.crt
+ssl_key_path = /etc/ssl/facho_deluxe_2/facho-backend.key
+
+# Días de validez del certificado autofirmado (por defecto 365)
+ssl_cert_days = 365
+

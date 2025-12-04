@@ -15,13 +15,16 @@ from .views import (
     SNMPJobViewSet, ExecutionViewSet, OnuInventoryViewSet,
     OnuIndexMapViewSet, OnuStateLookupViewSet, OIDViewSet, IndexFormulaViewSet,
     ODFViewSet, ODFHilosViewSet, ZabbixPortDataViewSet,
+    ZabbixCollectionScheduleViewSet, ZabbixCollectionOLTViewSet,
     AreaViewSet, PersonalViewSet, ZabbixConfigViewSet,
     WorkflowTemplateViewSet, WorkflowTemplateNodeViewSet,
     OLTWorkflowViewSet, WorkflowNodeViewSet, ConfiguracionSistemaViewSet,
     ConfiguracionSNMPViewSet,
     dashboard_stats, health_check, onu_info_view_list, onu_stats_by_olt,
-    future_executions_list
+    future_executions_list, cliente_info_avanzada
 )
+from .backup import export_backup, import_backup, compare_backup
+from .odf_backup import export_odf_backup, import_odf_backup, compare_odf_backup
 
 # Crear el router
 router = DefaultRouter()
@@ -41,6 +44,8 @@ router.register(r'formulas', IndexFormulaViewSet, basename='formula')
 router.register(r'odfs', ODFViewSet, basename='odf')
 router.register(r'odf-hilos', ODFHilosViewSet, basename='odf-hilo')
 router.register(r'zabbix-ports', ZabbixPortDataViewSet, basename='zabbix-port')
+router.register(r'odf-programaciones', ZabbixCollectionScheduleViewSet, basename='odf-programacion')
+router.register(r'odf-olts-programacion', ZabbixCollectionOLTViewSet, basename='odf-olt-programacion')
 router.register(r'areas', AreaViewSet, basename='area')
 router.register(r'personal', PersonalViewSet, basename='personal')
 router.register(r'zabbix-config', ZabbixConfigViewSet, basename='zabbix-config')
@@ -64,8 +69,21 @@ urlpatterns = [
     path('ont/info/', onu_info_view_list, name='ont-info-list'),
     path('ont/stats/', onu_stats_by_olt, name='ont-stats'),
     
+    # ODF - Información avanzada por DNI
+    path('odf/info-avanzada/', cliente_info_avanzada, name='odf-info-avanzada'),
+    
     # Futuras ejecuciones de workflows
     path('workflows/future-executions/', future_executions_list, name='future-executions-list'),
+    
+    # Backup y Restauración
+    path('backup/export/', export_backup, name='backup-export'),
+    path('backup/compare/', compare_backup, name='backup-compare'),
+    path('backup/import/', import_backup, name='backup-import'),
+    
+    # Backup ODF y Hilos
+    path('odf-backup/export/', export_odf_backup, name='odf-backup-export'),
+    path('odf-backup/compare/', compare_odf_backup, name='odf-backup-compare'),
+    path('odf-backup/import/', import_odf_backup, name='odf-backup-import'),
     
     # Pollers Zabbix (reemplaza coordinador) - ANTES del router para evitar conflictos
     path('pollers/', include('zabbix_pollers.urls')),

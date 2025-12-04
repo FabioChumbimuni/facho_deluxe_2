@@ -6,7 +6,7 @@ from celery import shared_task
 from redis.lock import Lock
 from redis import Redis
 from django.conf import settings
-from easysnmp import Session, EasySNMPError
+from easysnmp import Session, EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError
 from croniter import croniter
 from configuracion_avanzada.services import get_snmp_timeout, get_snmp_retries
 
@@ -463,7 +463,145 @@ def dispatcher_check_and_enqueue():
     
     logger.info(f"✅ Dispatcher completado. Total ejecuciones creadas: {total_created}")
 
-@shared_task(queue='discovery_main', bind=True, time_limit=180, autoretry_for=(Exception,), retry_kwargs={'max_retries': 0})
+def _update_execution_on_failure(execution_id, error_message, is_timeout=False, is_easysnmp_error=False, is_snmp_timeout=False):
+    """
+    Actualiza el estado de una ejecución cuando falla.
+    Se usa tanto en el bloque except como en on_failure callback.
+    
+    ✅ CRÍTICO: SOLO marca como FAILED si es un error REAL de SNMP (EasySNMP).
+    - EasySNMPTimeoutError: Timeout de SNMP → SÍ se marca como FAILED
+    - EasySNMPConnectionError: Error de conexión SNMP → SÍ se marca como FAILED
+    - TimeLimitExceeded (Celery): Timeout de Celery → Solo se marca como FAILED si ya pasó el timeout de SNMP
+    
+    Args:
+        execution_id: ID de la ejecución
+        error_message: Mensaje de error (debe ser el mensaje REAL de EasySNMP si es error SNMP)
+        is_timeout: Si True, indica que fue un timeout de Celery (TimeLimitExceeded)
+        is_easysnmp_error: Si True, indica que el error viene de EasySNMP (cualquier tipo)
+        is_snmp_timeout: Si True, indica que es específicamente EasySNMPTimeoutError (timeout de SNMP)
+    """
+    try:
+        from executions.models import Execution
+        from execution_utils.callbacks import on_task_failed
+        
+        execution = Execution.objects.select_related('snmp_job', 'olt', 'workflow_node').get(pk=execution_id)
+        
+        # Solo actualizar si no está ya completada
+        if execution.status not in ['SUCCESS', 'FAILED', 'INTERRUPTED']:
+            
+            # ✅ CRÍTICO: SOLO marcar como FAILED si es un error REAL de EasySNMP
+            # EasySNMPTimeoutError es la excepción específica que EasySNMP arroja para timeouts de SNMP
+            if is_easysnmp_error:
+                # Es un error real de SNMP (EasySNMP) → marcar como FAILED
+                execution.status = 'FAILED'
+                execution.error_message = error_message  # Usar el mensaje real de EasySNMP
+                
+                if is_snmp_timeout:
+                    # Es específicamente un timeout de SNMP (EasySNMPTimeoutError)
+                    logger.info(f"⏱️ Ejecución {execution_id} falló con TIMEOUT de SNMP (EasySNMPTimeoutError): {error_message}")
+                else:
+                    # Otro tipo de error de EasySNMP (conexión u otro)
+                    logger.info(f"✅ Ejecución {execution_id} falló con error EasySNMP: {error_message}")
+            elif is_timeout or 'TimeLimitExceeded' in str(error_message):
+                # Es un timeout de Celery → Verificar si ya pasó el timeout de SNMP
+                # Si ya pasó el timeout de SNMP, probablemente SNMP también falló
+                from configuracion_avanzada.services import get_snmp_timeout, get_snmp_retries
+                
+                job_type = 'descubrimiento'  # Default
+                if execution.snmp_job:
+                    job_type = execution.snmp_job.job_type or 'descubrimiento'
+                
+                snmp_timeout = get_snmp_timeout(job_type)
+                snmp_retries = get_snmp_retries(job_type)
+                max_snmp_time = snmp_timeout * (snmp_retries + 1)  # Tiempo máximo que puede tardar SNMP
+                
+                # Calcular tiempo transcurrido desde que se creó la ejecución
+                if execution.created_at:
+                    elapsed_time = (timezone.now() - execution.created_at).total_seconds()
+                    
+                    # Si ya pasó el timeout máximo de SNMP, probablemente SNMP también falló
+                    if elapsed_time > max_snmp_time:
+                        # Marcar como FAILED porque SNMP probablemente también falló
+                        execution.status = 'FAILED'
+                        execution.error_message = (
+                            f"Timeout general: La tarea fue cancelada por Celery después de {elapsed_time:.0f}s. "
+                            f"El timeout máximo de SNMP ({max_snmp_time}s) ya fue excedido, "
+                            f"lo que indica que SNMP probablemente también falló sin arrojar un error explícito. "
+                            f"Configuración SNMP: timeout={snmp_timeout}s, reintentos={snmp_retries}."
+                        )
+                        logger.warning(
+                            f"⚠️ Ejecución {execution_id}: Timeout de Celery pero SNMP timeout ({max_snmp_time}s) ya fue excedido. "
+                            f"Marcando como FAILED porque SNMP probablemente también falló."
+                        )
+                    else:
+                        # Aún no ha pasado el timeout de SNMP, puede ser que Celery canceló prematuramente
+                        # NO marcar como FAILED, solo loguear
+                        logger.warning(
+                            f"⚠️ Ejecución {execution_id}: Timeout de Celery (TimeLimitExceeded) pero "
+                            f"aún no ha pasado el timeout máximo de SNMP ({max_snmp_time}s). "
+                            f"SNMP puede estar funcionando correctamente. No se marca como FAILED."
+                        )
+                        return  # Salir sin actualizar el estado
+                else:
+                    # No hay created_at, asumir que ya pasó el timeout
+                    execution.status = 'FAILED'
+                    execution.error_message = (
+                        f"Timeout de Celery: La tarea fue cancelada por Celery. "
+                        f"Configuración SNMP: timeout={snmp_timeout}s, reintentos={snmp_retries}."
+                    )
+                    logger.warning(
+                        f"⚠️ Ejecución {execution_id}: Timeout de Celery sin created_at. "
+                        f"Marcando como FAILED por seguridad."
+                    )
+            else:
+                # Otro tipo de error desconocido → marcar como FAILED por seguridad
+                execution.status = 'FAILED'
+                execution.error_message = error_message
+                logger.warning(f"⚠️ Ejecución {execution_id} falló con error desconocido: {error_message}")
+            
+            
+            # Solo actualizar finished_at y duration si se marcó como FAILED
+            if execution.status == 'FAILED':
+                execution.finished_at = timezone.now()
+                # Si no tiene started_at, asignarlo ahora
+                if not execution.started_at:
+                    execution.started_at = timezone.now()
+                # Calcular duración
+                if execution.started_at and execution.finished_at:
+                    execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+                execution.save()
+                logger.info(f"✅ Ejecución {execution_id} actualizada a FAILED por error de SNMP")
+                
+                # ✅ CRÍTICO: Actualizar next_run_at del WorkflowNode si existe
+                # Esto evita que el scheduler cree nuevas ejecuciones inmediatamente
+                if execution.workflow_node:
+                    try:
+                        from execution_utils.callbacks import update_workflow_node_on_completion
+                        update_workflow_node_on_completion(execution.id, 'FAILED')
+                        logger.info(f"✅ WorkflowNode {execution.workflow_node.id} actualizado con next_run_at después de fallo")
+                    except Exception as node_error:
+                        logger.error(f"❌ Error actualizando WorkflowNode {execution.workflow_node.id}: {node_error}")
+                
+                # ✅ CRÍTICO: Llamar callback para actualizar estado del nodo
+                # Esto asegura que next_run_at se actualice correctamente
+                try:
+                    job_name = execution.snmp_job.nombre if execution.snmp_job else (execution.workflow_node.name if execution.workflow_node else 'Unknown')
+                    job_type_callback = execution.snmp_job.job_type if execution.snmp_job else 'descubrimiento'
+                    on_task_failed(
+                        olt_id=execution.olt.id,
+                        task_name=job_name,
+                        task_type=job_type_callback,
+                        error_message=execution.error_message,
+                        execution_id=execution.id
+                    )
+                except Exception as callback_error:
+                    logger.warning(f"⚠️ Error en callback on_task_failed: {callback_error}")
+                
+    except Exception as e:
+        logger.error(f"❌ Error actualizando ejecución {execution_id} en on_failure: {e}")
+
+
+@shared_task(queue='discovery_main', bind=True, time_limit=600, soft_time_limit=540, autoretry_for=(Exception,), retry_kwargs={'max_retries': 0})
 def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
     """
     Tarea principal de descubrimiento SNMP.
@@ -480,30 +618,34 @@ def discovery_main_task(self, snmp_job_id, olt_id, execution_id):
         logger.error(f"❌ discovery_main_task: {str(exc)}")
         
         # Marcar como fallida la ejecución principal
-        try:
-            from executions.models import Execution
-            execution = Execution.objects.get(pk=execution_id)
-            
-            # Solo actualizar si no está ya marcada como fallida
-            if execution.status != 'FAILED':
-                execution.status = 'FAILED'
-                execution.error_message = str(exc)
-                execution.finished_at = timezone.now()
-                # Si no tiene started_at, asignarlo ahora
-                if not execution.started_at:
-                    execution.started_at = timezone.now()
-                # Calcular duración
-                if execution.started_at and execution.finished_at:
-                    execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
-                execution.save()
-            
-            # ✅ NUEVO: Ya no se envían reintentos a nivel de tarea
-            # Los reintentos SNMP se manejan a nivel de configuración (ConfiguracionSNMP)
-            # Un nodo con sus reintentos SNMP cuenta como UNA ejecución
-            logger.info(f"ℹ️ Ejecución fallida - los reintentos SNMP se manejaron en la configuración")
-            
-        except Exception as exec_exc:
-            logger.error(f"❌ Error procesando fallo de ejecución: {str(exec_exc)}")
+        error_msg = str(exc)
+        
+        # ✅ CRÍTICO: Detectar si es error de EasySNMP (timeout/connection)
+        # EasySNMP arroja errores específicos que deben preservarse
+        is_easysnmp_error = isinstance(exc, (EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError)) or \
+                           (hasattr(exc, '__cause__') and isinstance(exc.__cause__, (EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError)))
+        
+        # Detectar específicamente si es un timeout de SNMP (EasySNMPTimeoutError)
+        is_snmp_timeout = isinstance(exc, EasySNMPTimeoutError) or \
+                         (hasattr(exc, '__cause__') and isinstance(exc.__cause__, EasySNMPTimeoutError))
+        
+        # Detectar timeout de Celery (TimeLimitExceeded) - diferente de timeout de SNMP
+        is_celery_timeout = 'TimeLimitExceeded' in str(type(exc).__name__) or 'TimeLimitExceeded' in str(exc)
+        
+        # Si es error de EasySNMP, usar el mensaje real
+        # Si es timeout de Celery, agregar contexto
+        _update_execution_on_failure(
+            execution_id, 
+            error_msg, 
+            is_timeout=is_celery_timeout, 
+            is_easysnmp_error=is_easysnmp_error,
+            is_snmp_timeout=is_snmp_timeout
+        )
+        
+        # ✅ NUEVO: Ya no se envían reintentos a nivel de tarea
+        # Los reintentos SNMP se manejan a nivel de configuración (ConfiguracionSNMP)
+        # Un nodo con sus reintentos SNMP cuenta como UNA ejecución
+        logger.info(f"ℹ️ Ejecución fallida - los reintentos SNMP se manejaron en la configuración")
         
         # La tarea principal termina aquí (no usa self.retry)
         return
@@ -524,28 +666,30 @@ def discovery_manual_task(self, snmp_job_id, olt_id, execution_id):
         logger.error(f"❌ discovery_manual_task: {str(exc)}")
         
         # Marcar como fallida la ejecución manual
-        try:
-            from executions.models import Execution
-            execution = Execution.objects.get(pk=execution_id)
-            
-            if execution.status != 'FAILED':
-                execution.status = 'FAILED'
-                execution.error_message = str(exc)
-                execution.finished_at = timezone.now()
-                # Si no tiene started_at, asignarlo ahora
-                if not execution.started_at:
-                    execution.started_at = timezone.now()
-                # Calcular duración
-                if execution.started_at and execution.finished_at:
-                    execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
-                execution.save()
-            
-            logger.info(f"ℹ️ Ejecución manual fallida - los reintentos SNMP se manejaron en la configuración")
-            
-        except Exception as manual_exc:
-            logger.error(f"❌ Error procesando fallo de ejecución manual: {str(manual_exc)}")
+        error_msg = str(exc)
         
-        return
+        # ✅ CRÍTICO: Detectar si es error de EasySNMP (timeout/connection)
+        # EasySNMP arroja errores específicos que deben preservarse
+        is_easysnmp_error = isinstance(exc, (EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError)) or \
+                           (hasattr(exc, '__cause__') and isinstance(exc.__cause__, (EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError)))
+        
+        # Detectar timeout de Celery (TimeLimitExceeded) - diferente de timeout de SNMP
+        is_celery_timeout = 'TimeLimitExceeded' in str(type(exc).__name__) or 'TimeLimitExceeded' in str(exc)
+        
+        # Detectar específicamente si es un timeout de SNMP
+        is_snmp_timeout_manual = isinstance(exc, EasySNMPTimeoutError) or \
+                                 (hasattr(exc, '__cause__') and isinstance(exc.__cause__, EasySNMPTimeoutError))
+        
+        # Usar la misma función para actualizar el estado
+        _update_execution_on_failure(
+            execution_id, 
+            error_msg, 
+            is_timeout=is_celery_timeout, 
+            is_easysnmp_error=is_easysnmp_error,
+            is_snmp_timeout=is_snmp_timeout_manual
+        )
+        
+        logger.info(f"ℹ️ Ejecución manual fallida - los reintentos SNMP se manejaron en la configuración")
 
 
 @shared_task(queue='discovery_retry', bind=True, time_limit=180)
@@ -576,10 +720,25 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
             
             # Log simplificado - solo información esencial
             
-            # Si ya está completada, salir
-            if execution.status in ['SUCCESS', 'FAILED']:
-                logger.info(f"🔍 execute_discovery SALIDA - Ejecución ya completada: {execution.status}")
+            # Si ya está completada o interrumpida, salir
+            if execution.status in ['SUCCESS', 'FAILED', 'INTERRUPTED']:
+                logger.info(f"🔍 execute_discovery SALIDA - Ejecución ya completada/interrumpida: {execution.status}")
                 return
+            
+            # Verificar si la plantilla está activa (si es una ejecución de workflow)
+            if execution.workflow_node:
+                node = execution.workflow_node
+                # Verificar si el nodo es ejecutable (incluye verificación de plantilla activa)
+                if not node.is_executable(skip_template_check=False):
+                    logger.info(f"🔍 execute_discovery PLANTILLA INACTIVA - Nodo '{node.name}' no ejecutable")
+                    execution.status = 'INTERRUPTED'
+                    execution.finished_at = timezone.now()
+                    if node.template_node and node.template_node.template:
+                        execution.error_message = f"Plantilla '{node.template_node.template.name}' desactivada"
+                    else:
+                        execution.error_message = "Nodo no ejecutable (plantilla o workflow inactivo)"
+                    execution.save(update_fields=['status', 'finished_at', 'error_message'])
+                    return
             
             olt = execution.olt
             job = execution.snmp_job
@@ -768,26 +927,43 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                     # Usar la nueva lógica de descubrimiento
                     from discovery.services import execute_discovery_task, process_successful_discovery
                     
-                    # Ejecutar walk y obtener resultados en memoria
-                    discovery_results = execute_discovery_task(execution_id)
-                    
-                    # Verificar si el walk fue exitoso
-                    if discovery_results.get('walk_successful', False) and not discovery_results.get('errors'):
-                        # SOLO si es exitoso, procesar y actualizar base de datos
-                        memory_data = discovery_results.get('memory_data', [])
-                        if memory_data:
-                            processing_results = process_successful_discovery(execution_id, memory_data)
-                            # Combinar resultados
-                            discovery_results.update(processing_results)
+                    try:
+                        # Ejecutar walk y obtener resultados en memoria
+                        discovery_results = execute_discovery_task(execution_id)
                         
-                        # Marcar ejecución como exitosa
-                        execution.status = 'SUCCESS'
-                        logger.info(f"✅ Tarea descubrimiento SUCCESS - Datos procesados y guardados")
-                    else:
-                        # Si hay errores, marcar como FAILED
+                        # Verificar si el walk fue exitoso
+                        if discovery_results.get('walk_successful', False) and not discovery_results.get('errors'):
+                            # SOLO si es exitoso, procesar y actualizar base de datos
+                            memory_data = discovery_results.get('memory_data', [])
+                            if memory_data:
+                                processing_results = process_successful_discovery(execution_id, memory_data)
+                                # Combinar resultados
+                                discovery_results.update(processing_results)
+                            
+                            # Marcar ejecución como exitosa
+                            execution.status = 'SUCCESS'
+                            logger.info(f"✅ Tarea descubrimiento SUCCESS - Datos procesados y guardados")
+                        else:
+                            # Si hay errores, marcar como FAILED
+                            execution.status = 'FAILED'
+                            execution.error_message = '; '.join(discovery_results.get('errors', ['Error desconocido en walk']))
+                            logger.error(f"❌ Tarea descubrimiento FAILED - No se procesaron datos")
+                    
+                    except (EasySNMPTimeoutError, EasySNMPConnectionError, EasySNMPError) as e:
+                        # ✅ CRÍTICO: Capturar errores específicos de EasySNMP
+                        # Estos errores se propagan desde discovery/services.py
+                        error_real = str(e)
+                        logger.error(f"❌ Error EasySNMP en descubrimiento - OLT {olt.abreviatura} ({olt.ip_address}): {error_real}")
+                        
+                        # Marcar ejecución como fallida con el mensaje real de EasySNMP
                         execution.status = 'FAILED'
-                        execution.error_message = '; '.join(discovery_results.get('errors', ['Error desconocido en walk']))
-                        logger.error(f"❌ Tarea descubrimiento FAILED - No se procesaron datos")
+                        execution.error_message = error_real
+                        execution.finished_at = timezone.now()
+                        execution.duration_ms = int((execution.finished_at - execution.started_at).total_seconds() * 1000)
+                        execution.save()
+                        
+                        # Re-lanzar para que discovery_main_task lo capture y actualice WorkflowNode
+                        raise
                     
                     # Crear resumen serializable (solo tipos básicos)
                     safe_summary = {
@@ -930,11 +1106,19 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                     details=error_details,
                 )
                 
-                # Re-lanzar con el error REAL de la librería
-                raise Exception(error_real)
+                # ✅ CRÍTICO: Re-lanzar el error ORIGINAL de EasySNMP para preservar el tipo y mensaje
+                # Esto permite que discovery_main_task detecte que es un error de EasySNMP
+                # y use el mensaje real de la librería
+                raise
+                
+            except (EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError):
+                # ✅ CRÍTICO: Si es un error de EasySNMP que se propagó, re-lanzarlo
+                # El error ya fue guardado arriba en el bloque EasySNMPError con el mensaje real
+                # Solo re-lanzar para que discovery_main_task lo capture y use el mensaje real
+                raise
                 
             except Exception as e:
-                # Manejar otros errores - guardar el error tal cual
+                # Otros errores que no son de EasySNMP
                 error_msg = str(e)
                 logger.error(f"❌ Error interno - OLT {olt.abreviatura} ({olt.ip_address}): {error_msg}")
                 
@@ -992,9 +1176,15 @@ def execute_discovery(snmp_job_id, olt_id, execution_id, queue_name='discovery_m
                 # Liberar lock solo si NO fue liberado antes
                 if not lock_released:
                     try:
-                        lock.release()
-                    except Exception:
-                        pass  # Lock ya fue liberado o no se pudo liberar
+                        # Verificar si el lock todavía es propiedad de este proceso antes de liberarlo
+                        # Esto evita el error "Cannot release a lock that's no longer owned"
+                        if lock.owned():
+                            lock.release()
+                    except Exception as lock_error:
+                        # Lock ya fue liberado, expiró, o no se pudo liberar
+                        # Esto es normal si el lock expiró o fue liberado por otro proceso
+                        logger.debug(f"⚠️ No se pudo liberar lock (normal si expiró): {lock_error}")
+                        pass
     
     except Exception as e:
         # NO usar logger.exception para evitar traceback en logs

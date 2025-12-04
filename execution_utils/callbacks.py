@@ -471,9 +471,12 @@ def on_task_completed(olt_id, task_name, task_type, duration_ms, status='SUCCESS
                 finally:
                     # Liberar lock después de procesar
                     try:
-                        lock.release()
-                    except:
-                        pass  # Ignorar errores al liberar lock
+                        # Verificar si el lock todavía es propiedad de este proceso antes de liberarlo
+                        # Esto evita el error "Cannot release a lock that's no longer owned"
+                        if lock.owned():
+                            lock.release()
+                    except Exception:
+                        pass  # Ignorar errores al liberar lock (normal si expiró o fue liberado)
         
         # Si el nodo que terminó está en cadena (SUCCESS o FAILED), ejecutar el siguiente nodo de la cadena
         elif workflow_node and status in ['SUCCESS', 'FAILED'] and workflow_node.is_chain_node and workflow_node.master_node:
@@ -674,9 +677,12 @@ def on_task_completed(olt_id, task_name, task_type, duration_ms, status='SUCCESS
                 finally:
                     # Liberar lock después de procesar
                     try:
-                        lock.release()
-                    except:
-                        pass  # Ignorar errores al liberar lock
+                        # Verificar si el lock todavía es propiedad de este proceso antes de liberarlo
+                        # Esto evita el error "Cannot release a lock that's no longer owned"
+                        if lock.owned():
+                            lock.release()
+                    except Exception:
+                        pass  # Ignorar errores al liberar lock (normal si expiró o fue liberado)
             else:
                 coordinator_logger.info(
                     f"✓ Cadena completada: '{workflow_node.name}' fue el último nodo",
@@ -700,6 +706,7 @@ def on_task_failed(olt_id, task_name, task_type, error_message, execution_id=Non
     
     Similar a on_task_completed pero con manejo de error
     También libera pollers asociados a la ejecución fallida
+    ✅ CRÍTICO: Actualiza next_run_at del WorkflowNode para evitar ejecuciones duplicadas
     """
     from hosts.models import OLT
     
@@ -717,6 +724,14 @@ def on_task_failed(olt_id, task_name, task_type, error_message, execution_id=Non
                 'execution_id': execution_id
             }
         )
+        
+        # ✅ CRÍTICO: Actualizar next_run_at del WorkflowNode si existe
+        # Esto evita que el scheduler cree nuevas ejecuciones inmediatamente
+        if execution_id:
+            try:
+                update_workflow_node_on_completion(execution_id, 'FAILED')
+            except Exception as update_error:
+                logger.warning(f"⚠️ Error actualizando WorkflowNode en on_task_failed: {update_error}")
         
         # ✅ MEJORADO: Liberar poller asociado a la ejecución fallida
         if execution_id:

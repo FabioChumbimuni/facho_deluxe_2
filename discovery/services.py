@@ -6,7 +6,7 @@ import time
 from typing import Dict, List, Tuple, Optional
 from django.db import transaction
 from django.utils import timezone
-from easysnmp import Session
+from easysnmp import Session, EasySNMPError, EasySNMPTimeoutError, EasySNMPConnectionError
 from django.conf import settings
 
 from .models import OnuIndexMap, OnuStatus, OnuInventory, OnuStateLookup
@@ -185,7 +185,30 @@ class DiscoveryService:
                     
             return results
             
+        except EasySNMPTimeoutError as e:
+            # ✅ CRÍTICO: Timeout específico de SNMP (EasySNMPTimeoutError)
+            # Esta es la excepción que EasySNMP arroja cuando hay timeout de SNMP
+            error_msg = str(e)
+            self.logger.error(f"⏱️ Timeout SNMP - OLT {self.olt.abreviatura} ({self.olt.ip_address}): {error_msg}")
+            # Re-lanzar para que execute_discovery lo capture y marque como FAILED
+            raise
+            
+        except EasySNMPConnectionError as e:
+            # ✅ CRÍTICO: Error de conexión específico de SNMP
+            error_msg = str(e)
+            self.logger.error(f"🔌 Error conexión SNMP - OLT {self.olt.abreviatura} ({self.olt.ip_address}): {error_msg}")
+            # Re-lanzar para que execute_discovery lo capture y marque como FAILED
+            raise
+            
+        except EasySNMPError as e:
+            # Otros errores de EasySNMP
+            error_msg = str(e)
+            self.logger.error(f"❌ Error SNMP - OLT {self.olt.abreviatura} ({self.olt.ip_address}): {error_msg}")
+            # Re-lanzar para que execute_discovery lo capture y marque como FAILED
+            raise
+            
         except Exception as e:
+            # Otros errores no relacionados con SNMP
             self.logger.error(f"❌ Error en SNMP Walk: {e}")
             raise
     

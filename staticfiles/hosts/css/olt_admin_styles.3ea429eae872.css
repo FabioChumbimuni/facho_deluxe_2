@@ -1,0 +1,117 @@
+/* ===== TEMA CLARO - Información de eliminación ===== */
+.olt-active-indicator {
+    color: #28a745 !important;
+    font-weight: bold !important;
+}
+
+.olt-deleted-minimal {
+    color: #e35f5f !important;
+}
+
+.olt-deleted-info {
+    background-color: #fff3cd !important;
+    padding: 10px !important;
+    border-left: 4px solid #ffc107 !important;
+    margin: 10px 0 !important;
+    border-radius: 4px !important;
+    color: #856404 !important;
+}
+
+.olt-deleted-title {
+    color: #856404 !important;
+    display: block !important;
+    margin-bottom: 8px !important;
+}
+
+.olt-deleted-details {
+    color: #856404 !important;
+    line-height: 1.6 !important;
+}
+
+.olt-deleted-details strong {
+    color: #856404 !important;
+}
+
+/* ===== TEMA OSCURO - Información de eliminación ===== */
+@media (prefers-color-scheme: dark) {
+    .olt-active-indicator {
+        color: #4caf50 !important;
+    }
+    
+    .olt-deleted-minimal {
+        color: #ff6b6b !important;
+    }
+    
+    .olt-deleted-info {
+        background-color: #583305 !important;
+        border-left-color: #ff9800 !important;
+        color: #ffc107 !important;
+    }
+    
+    .olt-deleted-title {
+        color: #ffc107 !important;
+    }
+    
+    .olt-deleted-details {
+        color: #ffc107 !important;
+    }
+    
+    .olt-deleted-details strong {
+        color: #ffd54f !important;
+    }
+}
+
+html[data-theme="dark"] .olt-active-indicator,
+.dark-theme .olt-active-indicator {
+    color: #4caf50 !important;
+}
+
+html[data-theme="dark"] .olt-deleted-minimal,
+.dark-theme .olt-deleted-minimal {
+    color: #ff6b6b !important;
+}
+
+/* ===== TEMA OSCURO - Sobrescribir estilos inline ===== */
+html[data-theme="dark"] .olt-deleted-info,
+.dark-theme .olt-deleted-info,
+html[data-theme="dark"] div[class*="olt-deleted-info"],
+.dark-theme div[class*="olt-deleted-info"] {
+    background-color: #583305 !important;
+    border-left-color: #ff9800 !important;
+    color: #ffc107 !important;
+}
+
+/* Forzar color en todos los elementos hijos en tema oscuro */
+html[data-theme="dark"] .olt-deleted-info *,
+.dark-theme .olt-deleted-info *,
+html[data-theme="dark"] div[class*="olt-deleted-info"] *,
+.dark-theme div[class*="olt-deleted-info"] * {
+    color: #ffc107 !important;
+}
+
+html[data-theme="dark"] .olt-deleted-title,
+.dark-theme .olt-deleted-title,
+html[data-theme="dark"] strong.olt-deleted-title,
+.dark-theme strong.olt-deleted-title,
+html[data-theme="dark"] .olt-deleted-info strong:first-child,
+.dark-theme .olt-deleted-info strong:first-child {
+    color: #ffc107 !important;
+}
+
+html[data-theme="dark"] .olt-deleted-details,
+.dark-theme .olt-deleted-details,
+html[data-theme="dark"] div.olt-deleted-details,
+.dark-theme div.olt-deleted-details {
+    color: #ffc107 !important;
+}
+
+html[data-theme="dark"] .olt-deleted-details strong,
+.dark-theme .olt-deleted-details strong,
+html[data-theme="dark"] .olt-deleted-info strong,
+.dark-theme .olt-deleted-info strong,
+html[data-theme="dark"] .olt-deleted-info .olt-deleted-details strong,
+.dark-theme .olt-deleted-info .olt-deleted-details strong {
+    color: #ffd54f !important;
+    font-weight: bold !important;
+}
+

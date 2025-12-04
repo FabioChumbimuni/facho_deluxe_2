@@ -1,0 +1,102 @@
+# ============================================
+# CONFIGURACIÓN DE DESPLIEGUE - FACHO DELUXE v2
+# ============================================
+# 
+# IMPORTANTE: 
+# - Copiar este archivo como deploy.conf en /etc/facho_deluxe_2/
+# - Completar con tus valores reales
+# - deploy.conf NO debe subirse al repositorio (contiene información sensible)
+#
+# Comando para instalar:
+#   sudo mkdir -p /etc/facho_deluxe_2
+#   sudo cp deploy.conf.example /etc/facho_deluxe_2/deploy.conf
+#   sudo nano /etc/facho_deluxe_2/deploy.conf
+#
+
+# ============================================
+# CONFIGURACIÓN DE BASE DE DATOS
+# ============================================
+[database]
+# Nombre de la base de datos PostgreSQL
+name = Facho_BD
+
+# Usuario de la base de datos
+user = Admin_Facho
+
+# Contraseña del usuario (CAMBIAR POR TU CONTRASEÑA SEGURA)
+password = TU_CONTRASEÑA_SEGURA_AQUI
+
+# IP o hostname donde corre PostgreSQL
+host = 127.0.0.1
+
+# Puerto de PostgreSQL (por defecto: 5432)
+port = 5432
+
+
+# ============================================
+# CONFIGURACIÓN DE RED Y API
+# ============================================
+[api]
+# IP donde se desplegará la API del backend
+# Usar 0.0.0.0 para escuchar en todas las interfaces
+# o una IP específica como 192.168.1.100
+api_ip = 192.168.56.222
+
+# Puerto donde correrá Gunicorn (API backend)
+api_port = 8000
+
+# Protocolo: http o https
+# Si usas HTTPS, asegúrate de tener certificados SSL configurados
+protocol = http
+
+# Dominio o IP para HTTPS (solo necesario si protocol = https)
+# Ejemplo: api.facho.com o 192.168.56.222
+# https_domain = api.facho.com
+
+
+# ============================================
+# CONFIGURACIÓN DE POLLERS
+# ============================================
+[pollers]
+# Número máximo de pollers concurrentes por OLT
+# Recomendado: 10 (estándar), 5 (conservador), 15 (agresivo)
+max_pollers_per_olt = 10
+
+# Número de consultas SNMP simultáneas por OLT
+# Recomendado: 5 (seguro), 3 (lenta), 8 (rápida)
+max_consultas_simultaneas = 5
+
+# Tamaño inicial del lote de ONUs
+# Recomendado: 200 (óptimo), 100 (conservador), 300 (agresivo)
+tamano_lote_inicial = 200
+
+
+# ============================================
+# CONFIGURACIÓN DE SUPERVISOR
+# ============================================
+[supervisor]
+# Puerto de la interfaz web de Supervisor
+supervisor_port = 9001
+
+# Usuario de la interfaz web de Supervisor
+supervisor_user = admin
+
+# Contraseña de la interfaz web de Supervisor
+supervisor_password = facho2025
+
+
+# ============================================
+# CONFIGURACIÓN DE USUARIO DEL SISTEMA
+# ============================================
+[system]
+# Usuario del sistema que ejecutará los procesos
+# Recomendado: crear un usuario específico como 'facho' o usar 'noc'
+system_user = noc
+
+# Grupo del sistema (generalmente 'www-data' o el mismo del usuario)
+system_group = www-data
+
+# Directorio donde se instalará el proyecto
+# Recomendado: /opt/facho_deluxe_2
+project_directory = /opt/facho_deluxe_2
+

@@ -20,6 +20,11 @@ try:
 except ImportError:
     pass  # El módulo puede no existir en algunos entornos
 
+try:
+    import snmp_jobs.cleanup_tasks  # noqa: F401
+except ImportError:
+    pass  # El módulo puede no existir en algunos entornos
+
 # Configuración de colas optimizada (5 colas especializadas)
 app.conf.task_routes = {
     'snmp_jobs.tasks.discovery_main_task': {'queue': 'discovery_main'},

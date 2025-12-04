@@ -1,0 +1,38 @@
+# ============================================
+# CONFIGURACIÓN BACKEND - FACHO DELUXE v2
+# ============================================
+# Este archivo contiene configuración del backend.
+# Ubicación: /etc/facho_deluxe_2/backend.conf
+# Este archivo contiene información sensible. NO compartir ni subir a git.
+
+[database]
+name = fiberprodata
+user = fiberproadmin
+password = noc12363
+host = 192.168.56.222
+port = 5432
+
+[api]
+api_ip = 192.168.56.222
+api_port = 8000
+
+[pollers]
+max_pollers_per_olt = 10
+max_consultas_simultaneas = 5
+tamano_lote_inicial = 200
+
+[supervisor]
+supervisor_port = 9001
+supervisor_user = admin
+supervisor_password = facho2025
+
+[system]
+system_user = noc
+system_group = www-data
+project_directory = /opt/facho_deluxe_2
+
+[django]
+django_username = admin
+django_email = admin@facho.com
+# django_password = # Si se deja vacío, se pedirá interactivamente
+

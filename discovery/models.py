@@ -89,7 +89,49 @@ class OnuIndexMap(models.Model):
                         self.logical
                     )
         
+        # Guardar primero para tener el ID
         super().save(*args, **kwargs)
+        
+        # ✅ CRÍTICO: Buscar y asignar automáticamente el hilo ODF correspondiente
+        # Solo si tenemos slot y port calculados, y aún no tenemos hilo asignado
+        if self.slot is not None and self.port is not None and self.odf_hilo is None:
+            self._asignar_hilo_odf_automatico()
+    
+    def _asignar_hilo_odf_automatico(self):
+        """
+        Busca y asigna automáticamente el hilo ODF correspondiente si existe.
+        Busca por misma OLT, mismo slot y mismo port.
+        """
+        if not self.slot or not self.port:
+            return
+        
+        try:
+            from odf_management.models import ODFHilos
+            
+            # Buscar hilo que coincida con esta ONU (misma OLT, slot y port)
+            hilo_candidato = ODFHilos.objects.filter(
+                odf__olt=self.olt,
+                slot=self.slot,
+                port=self.port
+            ).first()
+            
+            if hilo_candidato:
+                # Actualizar directamente sin llamar save() para evitar recursión
+                OnuIndexMap.objects.filter(pk=self.pk).update(odf_hilo=hilo_candidato)
+                # Actualizar también el atributo en memoria
+                self.odf_hilo = hilo_candidato
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    f"✅ ONU {self.normalized_id} (Slot {self.slot}/Port {self.port}) "
+                    f"asignada automáticamente al hilo {hilo_candidato.id} "
+                    f"({hilo_candidato.identificador_completo})"
+                )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"⚠️ Error asignando hilo ODF automáticamente a ONU {self.id}: {e}")
 
 
 class OnuStateLookup(models.Model):
