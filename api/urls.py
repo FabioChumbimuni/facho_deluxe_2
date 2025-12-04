@@ -21,7 +21,7 @@ from .views import (
     OLTWorkflowViewSet, WorkflowNodeViewSet, ConfiguracionSistemaViewSet,
     ConfiguracionSNMPViewSet,
     dashboard_stats, health_check, onu_info_view_list, onu_stats_by_olt,
-    future_executions_list, cliente_info_avanzada
+    future_executions_list, cliente_info_avanzada, onus_sin_hilo, odf_estadisticas
 )
 from .backup import export_backup, import_backup, compare_backup
 from .odf_backup import export_odf_backup, import_odf_backup, compare_odf_backup
@@ -71,6 +71,8 @@ urlpatterns = [
     
     # ODF - Información avanzada por DNI
     path('odf/info-avanzada/', cliente_info_avanzada, name='odf-info-avanzada'),
+    path('odf/onus-sin-hilo/', onus_sin_hilo, name='odf-onus-sin-hilo'),
+    path('odf/estadisticas/', odf_estadisticas, name='odf-estadisticas'),
     
     # Futuras ejecuciones de workflows
     path('workflows/future-executions/', future_executions_list, name='future-executions-list'),

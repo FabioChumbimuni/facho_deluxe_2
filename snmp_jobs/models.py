@@ -1377,10 +1377,27 @@ class WorkflowNode(models.Model):
             if not self.master_node.is_executable():
                 return False, f"Master '{self.master_node.name}' no está habilitado"
             
-            # El master debe haber terminado (SUCCESS o FAILED) - no solo SUCCESS
-            # Verificar last_success_at O last_failure_at O last_run_at (cualquiera indica que terminó)
-            if not self.master_node.last_success_at and not self.master_node.last_failure_at and not self.master_node.last_run_at:
-                return False, f"Master '{self.master_node.name}' no ha ejecutado (ni exitosamente ni con fallo)"
+            # ✅ CRÍTICO: Verificar directamente la Execution del master (fuente de verdad inmediata)
+            # en lugar de confiar en last_success_at/last_run_at que pueden no estar actualizados aún
+            # debido a condiciones de carrera entre el callback y el poller
+            from executions.models import Execution
+            master_execution = Execution.objects.filter(
+                workflow_node=self.master_node,
+                status__in=['SUCCESS', 'FAILED', 'INTERRUPTED']
+            ).order_by('-finished_at').first()
+            
+            if master_execution and master_execution.finished_at:
+                # El master tiene una ejecución terminada recientemente
+                # Verificar que haya terminado hace menos de 5 minutos (para evitar usar ejecuciones antiguas)
+                time_since_finished = (now - master_execution.finished_at).total_seconds()
+                if time_since_finished > 300:  # 5 minutos
+                    # La ejecución es muy antigua, verificar last_success_at/last_run_at como fallback
+                    if not self.master_node.last_success_at and not self.master_node.last_failure_at and not self.master_node.last_run_at:
+                        return False, f"Master '{self.master_node.name}' no ha ejecutado recientemente (ni exitosamente ni con fallo)"
+            else:
+                # No hay ejecución terminada reciente, verificar last_success_at/last_run_at como fallback
+                if not self.master_node.last_success_at and not self.master_node.last_failure_at and not self.master_node.last_run_at:
+                    return False, f"Master '{self.master_node.name}' no ha ejecutado (ni exitosamente ni con fallo)"
             
             # Si el master tiene next_run_at en el futuro, aún no ha terminado su ciclo
             # (pero puede estar ejecutando ahora, así que permitimos si last_success_at existe)

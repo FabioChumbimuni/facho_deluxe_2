@@ -2409,3 +2409,217 @@ def cliente_info_avanzada(request):
             'success': False,
             'message': f'Error al procesar la solicitud: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# ENDPOINT: ONUs sin hilos relacionados
+# ============================================================================
+
+@extend_schema(
+    description="Obtener ONUs que no tienen hilos ODF relacionados",
+    parameters=[
+        OpenApiParameter(name='olt', type=OpenApiTypes.INT, description='ID de la OLT (opcional, para filtrar)', required=False),
+        OpenApiParameter(name='page', type=OpenApiTypes.INT, description='Número de página', required=False),
+        OpenApiParameter(name='page_size', type=OpenApiTypes.INT, description='Tamaño de página', required=False),
+    ],
+    responses={
+        200: {
+            'type': 'object',
+            'properties': {
+                'count': {'type': 'integer'},
+                'results': {'type': 'array'},
+            }
+        }
+    }
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def onus_sin_hilo(request):
+    """
+    Endpoint que obtiene ONUs que no tienen hilos ODF relacionados.
+    Solo muestra ONUs con presence ENABLED.
+    """
+    from discovery.models import OnuInventory, OnuStatus
+    from rest_framework.pagination import PageNumberPagination
+    
+    olt_id = request.query_params.get('olt')
+    
+    # Query base: ONUs con presence ENABLED y sin hilo relacionado
+    query = OnuInventory.objects.select_related(
+        'olt',
+        'onu_index',
+        'onu_index__status'
+    ).filter(
+        olt__is_deleted=False,
+        onu_index__status__presence='ENABLED',
+        onu_index__odf_hilo__isnull=True  # Sin hilo relacionado
+    )
+    
+    if olt_id:
+        query = query.filter(olt_id=olt_id)
+    
+    # Paginación
+    paginator = PageNumberPagination()
+    paginator.page_size = int(request.query_params.get('page_size', 50))
+    
+    page = paginator.paginate_queryset(query, request)
+    
+    # Serializar resultados
+    from .serializers import OnuInventoryListSerializer
+    serializer = OnuInventoryListSerializer(page, many=True)
+    
+    return paginator.get_paginated_response(serializer.data)
+
+
+# ============================================================================
+# ENDPOINT: Estadísticas de ODF
+# ============================================================================
+
+@extend_schema(
+    description="Obtener estadísticas de ODF: cantidad de clientes por ODF, ODF sin hilos, hilos sin usar",
+    responses={
+        200: {
+            'type': 'object',
+            'properties': {
+                'odf_estadisticas': {'type': 'array'},
+                'odf_sin_hilos': {'type': 'array'},
+                'hilos_sin_usar': {'type': 'array'},
+                'resumen': {'type': 'object'},
+            }
+        }
+    }
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def odf_estadisticas(request):
+    """
+    Endpoint que obtiene estadísticas de ODF:
+    - Cantidad de clientes por ODF
+    - ODF que no tienen hilos
+    - Hilos que no están siendo usados por ninguna ONU
+    """
+    from discovery.models import OnuInventory
+    from odf_management.models import ODF, ODFHilos
+    from django.db.models import Count, Q
+    
+    # 1. Estadísticas de clientes por ODF
+    # La relación es: ODF -> ODFHilos -> OnuIndexMap (related_name por defecto: onuinventory_set) -> OnuInventory (related_name="inventory")
+    from discovery.models import OnuIndexMap
+    odf_estadisticas = ODF.objects.filter(
+        olt__is_deleted=False
+    ).annotate(
+        total_hilos=Count('odfhilos', distinct=True)
+    ).select_related('olt').order_by('-total_hilos')
+    
+    # Calcular total_clientes y hilos_con_clientes manualmente
+    odf_stats_list = []
+    for odf in odf_estadisticas:
+        # Contar OnuInventory con presence ENABLED que están relacionados con hilos de este ODF
+        hilos_ids = list(odf.odfhilos_set.values_list('id', flat=True))
+        total_clientes = OnuInventory.objects.filter(
+            onu_index__odf_hilo_id__in=hilos_ids,
+            onu_index__status__presence='ENABLED',
+            olt__is_deleted=False
+        ).count()
+        
+        # Contar hilos que tienen al menos un cliente
+        # OnuIndexMap tiene related_name="inventory" en OnuInventory, y related_name="status" en OnuStatus
+        hilos_con_clientes = OnuIndexMap.objects.filter(
+            odf_hilo_id__in=hilos_ids,
+            inventory__isnull=False,  # Tiene OnuInventory
+            status__presence='ENABLED'  # Status directamente desde OnuIndexMap
+        ).values_list('odf_hilo_id', flat=True).distinct().count()
+        
+        odf_stats_list.append({
+            'id': odf.id,
+            'nombre_troncal': odf.nombre_troncal,
+            'numero_odf': odf.numero_odf,
+            'olt_id': odf.olt.id if odf.olt else None,
+            'olt_nombre': odf.olt.abreviatura if odf.olt else None,
+            'total_clientes': total_clientes,
+            'total_hilos': odf.total_hilos,
+            'hilos_con_clientes': hilos_con_clientes,
+            'hilos_sin_clientes': odf.total_hilos - hilos_con_clientes
+        })
+    
+    # Ordenar por total_clientes
+    odf_stats_list.sort(key=lambda x: x['total_clientes'], reverse=True)
+    
+    
+    # 2. ODF sin hilos
+    odf_sin_hilos = ODF.objects.filter(
+        olt__is_deleted=False,
+        odfhilos__isnull=True
+    ).select_related('olt').values(
+        'id', 'nombre_troncal', 'numero_odf', 
+        'olt__id', 'olt__abreviatura'
+    )
+    
+    odf_sin_hilos_list = [
+        {
+            'id': odf['id'],
+            'nombre_troncal': odf['nombre_troncal'],
+            'numero_odf': odf['numero_odf'],
+            'olt_id': odf['olt__id'],
+            'olt_nombre': odf['olt__abreviatura']
+        }
+        for odf in odf_sin_hilos
+    ]
+    
+    # 3. Hilos sin usar (hilos que no tienen ONUs relacionadas con presence ENABLED)
+    # La relación es: ODFHilos <- OnuIndexMap.odf_hilo <- OnuInventory.onu_index (related_name="inventory")
+    # Buscamos hilos que no tienen OnuIndexMap relacionados, o que tienen OnuIndexMap
+    # pero esos OnuIndexMap no tienen OnuInventory con presence ENABLED
+    hilos_con_onus = OnuIndexMap.objects.filter(
+        odf_hilo__isnull=False,
+        inventory__isnull=False,  # Tiene OnuInventory
+        status__presence='ENABLED'  # Status directamente desde OnuIndexMap
+    ).values_list('odf_hilo_id', flat=True).distinct()
+    
+    hilos_sin_usar = ODFHilos.objects.filter(
+        odf__olt__is_deleted=False
+    ).exclude(
+        id__in=hilos_con_onus
+    ).select_related('odf', 'odf__olt').values(
+        'id', 'slot', 'port', 'hilo_numero', 'vlan',
+        'odf__id', 'odf__nombre_troncal', 'odf__numero_odf',
+        'odf__olt__id', 'odf__olt__abreviatura'
+    )
+    
+    hilos_sin_usar_list = [
+        {
+            'id': hilo['id'],
+            'slot': hilo['slot'],
+            'port': hilo['port'],
+            'hilo_numero': hilo['hilo_numero'],
+            'vlan': hilo['vlan'],
+            'odf_id': hilo['odf__id'],
+            'odf_nombre': hilo['odf__nombre_troncal'],
+            'odf_numero': hilo['odf__numero_odf'],
+            'olt_id': hilo['odf__olt__id'],
+            'olt_nombre': hilo['odf__olt__abreviatura']
+        }
+        for hilo in hilos_sin_usar
+    ]
+    
+    # Resumen
+    total_odfs = ODF.objects.filter(olt__is_deleted=False).count()
+    total_hilos = ODFHilos.objects.filter(odf__olt__is_deleted=False).count()
+    total_clientes_con_hilo = OnuInventory.objects.filter(
+        olt__is_deleted=False,
+        onu_index__status__presence='ENABLED',
+        onu_index__odf_hilo__isnull=False
+    ).count()
+    
+    return Response({
+        'odf_estadisticas': odf_stats_list,
+        'odf_sin_hilos': odf_sin_hilos_list,
+        'hilos_sin_usar': hilos_sin_usar_list,
+        'resumen': {
+            'total_odfs': total_odfs,
+            'total_hilos': total_hilos,
+            'total_clientes_con_hilo': total_clientes_con_hilo,
+            'odf_sin_hilos_count': len(odf_sin_hilos_list),
+            'hilos_sin_usar_count': len(hilos_sin_usar_list)
+        }
+    }, status=status.HTTP_200_OK)
