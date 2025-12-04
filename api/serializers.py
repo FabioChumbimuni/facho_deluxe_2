@@ -389,35 +389,75 @@ class OnuInventorySerializer(serializers.ModelSerializer):
             raw_index_key=raw_index_key_input
         )
         
-        # 3. Sincronizar active con presence_input ANTES de crear OnuInventory
+        # ✅ CRÍTICO: Si la ONU ya existía, verificar si necesita asignar hilo ODF
+        # Esto es necesario porque get_or_create no llama a save() si la ONU ya existe
+        if not created:
+            # Siempre intentar asignar/reasignar hilo ODF si tiene slot/port
+            if onu_index.slot is not None and onu_index.port is not None:
+                # Si no tiene hilo o si queremos forzar la búsqueda, intentar asignar
+                if onu_index.odf_hilo is None:
+                    onu_index._asignar_hilo_odf_automatico()
+                # Si ya tiene hilo, verificar que sigue siendo el correcto
+                # (por si cambió el slot/port en la fórmula)
+                else:
+                    # Verificar si el hilo actual sigue siendo válido para este slot/port
+                    hilo_actual = onu_index.odf_hilo
+                    if (hilo_actual.odf.olt != onu_index.olt or 
+                        hilo_actual.slot != onu_index.slot or 
+                        hilo_actual.port != onu_index.port):
+                        # El hilo ya no coincide, buscar uno nuevo
+                        onu_index._asignar_hilo_odf_automatico()
+        
+        # 3. Sincronizar active con presence_input ANTES de crear/actualizar OnuInventory
         # active debe reflejar presence: ENABLED=true, DISABLED=false
         validated_data['active'] = (presence_input == 'ENABLED')
         
-        # 4. Crear OnuInventory
-        onu_inventory = OnuInventory.objects.create(
+        # 4. Crear o actualizar OnuInventory
+        # ✅ CRÍTICO: Si la ONU ya existía, actualizar en lugar de crear
+        onu_inventory, inventory_created = OnuInventory.objects.get_or_create(
             onu_index=onu_index,
-            **validated_data
+            defaults={
+                **validated_data
+            }
         )
         
-        # 5. Crear OnuStatus si no existe (GARANTIZADO)
-        try:
-            # Intentar acceder al status
-            _ = onu_index.status
-        except OnuStatus.DoesNotExist:
-            # No existe, crearlo
-            initial_presence = presence_input
-            initial_state_label = estado_input  # 'ACTIVO' o 'SUSPENDIDO'
-            initial_state_value = 1 if estado_input == 'ACTIVO' else 2
-            
-            OnuStatus.objects.create(
-                onu_index=onu_index,
-                olt=olt,
-                presence=initial_presence,
-                last_state_label=initial_state_label,
-                last_state_value=initial_state_value,
-                consecutive_misses=0,
-                last_seen_at=timezone.now() if initial_presence == 'ENABLED' else None
-            )
+        if not inventory_created:
+            # Si ya existía, actualizar los campos proporcionados
+            for attr, value in validated_data.items():
+                setattr(onu_inventory, attr, value)
+            onu_inventory.save()
+        
+        # 5. Crear o actualizar OnuStatus
+        # ✅ CRÍTICO: Si la ONU ya existía en DISABLED, actualizar a ENABLED si corresponde
+        onu_status, status_created = OnuStatus.objects.get_or_create(
+            onu_index=onu_index,
+            defaults={
+                'olt': olt,
+                'presence': presence_input,
+                'last_state_label': estado_input,
+                'last_state_value': 1 if estado_input == 'ACTIVO' else 2,
+                'consecutive_misses': 0,
+                'last_seen_at': timezone.now() if presence_input == 'ENABLED' else None
+            }
+        )
+        
+        if not status_created:
+            # Si ya existía, actualizar presence y estado si se está activando
+            if presence_input == 'ENABLED':
+                # Si estaba en DISABLED y ahora se activa, actualizar
+                if onu_status.presence == 'DISABLED':
+                    onu_status.presence = 'ENABLED'
+                    onu_status.last_seen_at = timezone.now()
+                    onu_status.consecutive_misses = 0
+                # Actualizar estado administrativo
+                onu_status.last_state_label = estado_input
+                onu_status.last_state_value = 1 if estado_input == 'ACTIVO' else 2
+                onu_status.save()
+            else:
+                # Si se está desactivando, actualizar presence
+                if onu_status.presence != 'DISABLED':
+                    onu_status.presence = 'DISABLED'
+                    onu_status.save()
         
         return onu_inventory
     
@@ -458,6 +498,12 @@ class OnuInventorySerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         
         instance.save()
+        
+        # ✅ CRÍTICO: Verificar si el OnuIndexMap necesita asignar hilo ODF
+        # Esto es necesario porque al actualizar OnuInventory, el OnuIndexMap puede no tener hilo asignado aún
+        if instance.onu_index:
+            if instance.onu_index.slot is not None and instance.onu_index.port is not None and instance.onu_index.odf_hilo is None:
+                instance.onu_index._asignar_hilo_odf_automatico()
         
         # ACTUALIZAR ESTADO: Si se proporcionó estado_input
         if estado_input and hasattr(instance.onu_index, 'status'):

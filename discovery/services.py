@@ -241,6 +241,11 @@ class DiscoveryService:
         if created:
             results['new_index_created'] += 1
             self.logger.debug(f"📝 Nuevo índice creado: {raw_index_key}")
+        else:
+            # ✅ CRÍTICO: Si la ONU ya existía, verificar si necesita asignar hilo ODF
+            # Esto es necesario porque get_or_create no llama a save() si la ONU ya existe
+            if onu_index_map.slot is not None and onu_index_map.port is not None and onu_index_map.odf_hilo is None:
+                onu_index_map._asignar_hilo_odf_automatico()
             
         return onu_index_map
     
@@ -318,6 +323,23 @@ class DiscoveryService:
         
         if state_changed:
             onu_status.last_change_execution = self.execution
+        
+        # ✅ CRÍTICO: Si la ONU estaba en DISABLED y ahora se reactiva, verificar hilo ODF
+        # Esto asegura que si la ONU se reactiva desde los nodos, también se asigne el hilo
+        if was_disabled and is_now_enabled:
+            # Verificar si necesita asignar/reasignar hilo ODF
+            if onu_index_map.slot is not None and onu_index_map.port is not None:
+                if onu_index_map.odf_hilo is None:
+                    # No tiene hilo, intentar asignar
+                    onu_index_map._asignar_hilo_odf_automatico()
+                else:
+                    # Verificar que el hilo actual sigue siendo válido
+                    hilo_actual = onu_index_map.odf_hilo
+                    if (hilo_actual.odf.olt != onu_index_map.olt or 
+                        hilo_actual.slot != onu_index_map.slot or 
+                        hilo_actual.port != onu_index_map.port):
+                        # El hilo ya no coincide, buscar uno nuevo
+                        onu_index_map._asignar_hilo_odf_automatico()
             
         onu_status.save()
         
